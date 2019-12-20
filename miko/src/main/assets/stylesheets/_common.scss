@@ -1,0 +1,12 @@
+@import "lib/bulma/sass/utilities/initial-variables";
+@import "lib/bulma/sass/utilities/functions";
+@import "tristate";
+@import "music-player";
+@import "basic";
+
+$navbar-item-img-max-height: 3rem;
+$slider-output-width: 12 rem;
+
+.img-circle {
+  border-radius: 50%;
+}

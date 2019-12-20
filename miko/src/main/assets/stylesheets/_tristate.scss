@@ -1,0 +1,84 @@
+//Adapted from https://codepen.io/Davide_sd/pen/AmazD
+$tristate-height: 2rem;
+$tristate-width: $tristate-height * 3;
+$tristate-toggle-dimensions: $tristate-height * 1.05;
+$tristate-font-size: 1rem;
+$tristate-text-color: white;
+$tristate-background-color: hsl(0, 0%, 15%);
+
+$tristate-color-yes: green;
+$tristate-color-neutral: gray;
+$tristate-color-no: red;
+
+$tristate-colors: $tristate-color-no, $tristate-color-neutral, $tristate-color-yes;
+
+@mixin borderColor($i) {
+  background: nth($tristate-colors, $i);
+}
+
+.tristate-wrapper {
+  width: $tristate-width;
+  height: $tristate-height;
+  position: relative;
+  margin: auto 0.1rem;
+  border-radius: $tristate-height/6;
+  background: $tristate-background-color;
+
+  & .tristate-toggle {
+    width: $tristate-toggle-dimensions;
+    height: $tristate-toggle-dimensions;
+    position: absolute;
+    left: $tristate-width / 3 - ($tristate-toggle-dimensions - $tristate-height) / 2;
+    top: -($tristate-toggle-dimensions - $tristate-height) / 2;
+    border-radius: 20%;
+    box-sizing: border-box;
+    @include borderColor(2);
+  }
+
+  & label {
+    cursor: pointer;
+    width: $tristate-height;
+    height: $tristate-height;
+    position: absolute;
+    margin: 0;
+    padding: 0;
+    z-index: 1;
+    display: inline-block;
+
+    text-align: center;
+    line-height: $tristate-height;
+    font-size: $tristate-font-size;
+    font-weight: bold;
+    color: $tristate-text-color;
+  }
+
+  & input {
+    position: absolute;
+    left: 0;
+    margin: 0;
+    padding: 0;
+    opacity: 0;
+  }
+}
+
+input[type="radio"].tristate-yes:checked {
+  ~ .tristate-toggle {
+    @include borderColor(3);
+    left: $tristate-width * 2 / 3 -($tristate-toggle-dimensions - $tristate-height) / 2;
+  }
+}
+
+input[type="radio"].tristate-no:checked {
+  ~ .tristate-toggle {
+    @include borderColor(1);
+    left: -($tristate-toggle-dimensions - $tristate-height) / 2;
+  }
+}
+
+.tristate-neutral {
+  left: 100% * 1 / 3;
+}
+
+.tristate-yes {
+  left: 100% * 2 / 3;
+}

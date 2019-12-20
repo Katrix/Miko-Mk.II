@@ -1,0 +1,5 @@
+addSbtPlugin("org.portable-scala" % "sbt-scalajs-crossproject" % "0.6.0")
+addSbtPlugin("org.scala-js"       % "sbt-scalajs"              % "0.6.31")
+addSbtPlugin("com.vmunier"        % "sbt-web-scalajs"          % "1.0.7")
+addSbtPlugin("org.irundaia.sbt"   % "sbt-sassify"              % "1.4.12")
+addSbtPlugin("com.typesafe.play"  % "sbt-plugin"               % "2.8.0")

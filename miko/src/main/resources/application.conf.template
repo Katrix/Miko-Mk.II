@@ -1,0 +1,84 @@
+miko {
+    token = ${?MIKO_TOKEN}
+    client-id = ${?MIKO_CLIENT_ID}
+    client-secret = ${?MIKO_SECRET}
+
+    bot-owners = []
+    slave-tokens = []
+
+    db {
+        url = "jdbc:postgresql:miko2"
+        url = ${?MIKO_JDBC_DATABASE_URL}
+        username = "miko"
+        username = ${?MIKO_JDBC_DATABASE_USERNAME}
+        password = ""
+        password = ${?MIKO_JDBC_DATABASE_PASSWORD}
+    }
+
+    use-dummy-data = false
+}
+
+db.default {
+    driver = org.postgresql.Driver
+    url = ${miko.db.url}
+    username = ${miko.db.username}
+    password = ${miko.db.password}
+}
+
+akka {
+    log-dead-letters = on
+    log-dead-letters-during-shutdown = on
+
+    coordinated-shutdown {
+        phases {
+            music {
+                depends-on = [before-service-unbind]
+            }
+        }
+    }
+
+    actor {
+        debug {
+            receive = on
+
+            unhandled = on
+
+            autoreceive = on
+        }
+    }
+
+    http {
+        host-connection-pool {
+            idle-timeout = 60 minute
+        }
+    }
+}
+
+play {
+    application.loader = miko.MikoApplication
+
+    evolutions {
+        autocommit = false
+        autoApply = true
+    }
+
+    filters {
+        enabled += play.filters.csp.CSPFilter
+        enabled += play.filters.gzip.GzipFilter
+
+        csp {
+            directives = {
+                block-all-mixed-content = ""
+                script-src = ${play.filters.csp.nonce.pattern} "'self'"
+                style-src = "'self' 'unsafe-inline'"
+                img-src = "'self' data: https: http:"
+            }
+        }
+    }
+
+    http {
+        secret.key = "changeme"
+        secret.key = ${?APPLICATION_SECRET}
+        session.maxAge = 28d # 4 weeks
+    }
+}

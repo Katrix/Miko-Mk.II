@@ -1,0 +1,17 @@
+@import "common";
+
+$primary: $purple;
+$navbar-height: 4rem;
+$navbar-item-img-max-height: 48px;
+
+/*
+.hero {
+  .navbar.is-primary {
+    background-color: $primary;
+    background-image: none;
+  }
+}
+ */
+
+@import "lib/bulma/bulma";
+@import "lib/bulma-slider/dist/css/bulma-slider";

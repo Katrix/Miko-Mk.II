@@ -1,0 +1,31 @@
+<!--
+  ~ Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+  -->
+<!-- The default logback configuration that Play uses in dev mode if no other configuration is provided -->
+<configuration>
+
+    <conversionRule conversionWord="coloredLevel" converterClass="play.api.libs.logback.ColoredLevel" />
+
+    <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%-5coloredLevel [%date{HH:mm:ss.SSS}] [%logger{36}] [%X{sourceThread}] [%X{akkaSource}]: %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <logger name="VoiceTextStreams" level="DEBUG" />
+
+    <logger name="akka.http.impl.engine.client.PoolGateway" level="OFF" />
+    <logger name="akka.io.TcpOutgoingConnection" level="INFO" />
+    <logger name="com.typesafe.sslconfig.ssl.DefaultHostnameVerifier" level="INFO" />
+    <logger name="akka.io.SimpleDnsManager" level="INFO" />
+    <logger name="akka.actor.TimerScheduler" level="INFO" />
+
+    <logger name="com.gargoylesoftware.htmlunit.javascript" level="OFF" />
+
+    <logger name="org.apache.http.wire" level="INFO" />
+
+    <root level="INFO">
+        <appender-ref ref="STDOUT" />
+    </root>
+
+</configuration>
