@@ -1,17 +1,16 @@
 package miko.commands
 
+import java.nio.file.{Files, Paths}
 import java.text.NumberFormat
 
 import ackcord._
 import ackcord.data._
-import ackcord.data.raw.RawMessage
 import ackcord.commands._
-import ackcord.requests.RequestResponse
 import ackcord.syntax._
 import akka.NotUsed
 import akka.actor.CoordinatedShutdown
 import akka.stream.scaladsl.{Flow, Sink}
-import cats.effect.Bracket
+import cats.effect.{Bracket, IO, Resource}
 import cats.syntax.all._
 import doobie.util.transactor.Transactor
 import miko.MikoConfig
@@ -19,7 +18,10 @@ import miko.db.DBMemoizedAccess
 import miko.settings.GuildSettings
 import miko.util.{Crypto, PGPKeys}
 import miko.voicetext.VoiceTextStreams
+import pprint.{PPrinter, Tree, Util}
 import scalacache.{Cache, Mode}
+
+import scala.util.Try
 
 class GenericCommands[G[_]: Transactor: Mode: Streamable](vtStreams: VoiceTextStreams[G])(
     implicit config: MikoConfig,
@@ -177,4 +179,70 @@ class GenericCommands[G[_]: Transactor: Mode: Streamable](vtStreams: VoiceTextSt
 
     m.tChannel.sendMessage(embed = Some(embed))
   }
+
+  private def pprintAdditionalHandlers: PartialFunction[Any, Tree] = {
+    case x: Product =>
+      val className = x.getClass.getName
+      // see source code for pprint.treeify()
+      val shouldNotPrettifyCaseClass = x.productArity == 0 || (x.productArity == 2 && Util.isOperator(x.productPrefix)) || className
+        .startsWith(pprint.tuplePrefix) || className == "scala.Some"
+
+      if (shouldNotPrettifyCaseClass)
+        pprint.treeify(x)
+      else {
+        pprint.Tree.Apply(
+          x.productPrefix,
+          x.productElementNames.zip(x.productIterator).flatMap {
+            case (k, v) =>
+              val prettyValue: Tree = pprintAdditionalHandlers.lift(v).getOrElse(pprint2.treeify(v))
+              Seq(pprint.Tree.Infix(Tree.Literal(k), "=", prettyValue))
+          }
+        )
+      }
+  }
+
+  lazy val pprint2: PPrinter = pprint.copy(additionalHandlers = pprintAdditionalHandlers)
+
+  val debug: Command[(String, Option[String])] =
+    BotOwnerGuildCommand
+      .parsing(MessageParser.stringParser.product(MessageParser.optional(MessageParser.stringParser)))
+      .withSideEffects { implicit m =>
+        val (tpe, identifier) = m.parsed
+
+        def singleObject[Id, Obj](name: String, createId: RawSnowflake => Id)(
+            resolve: Id => Option[Obj]
+        ): Either[String, fansi.Str] = {
+          val snowflakeIdentifier = identifier
+            .toRight("No id specified")
+            .flatMap(id => Try(RawSnowflake(id)).toEither.leftMap(_ => "Invalid id"))
+          snowflakeIdentifier.map(createId).flatMap(resolve(_).toRight(s"$name not found")).map(obj => pprint2(obj))
+        }
+
+        val res = tpe match {
+          case "user"        => singleObject("User", UserId.apply)(_.resolve)
+          case "member"      => singleObject("Member", UserId.apply)(_.resolveMember(m.guild.id))
+          case "role"        => singleObject("Role", RoleId.apply)(_.resolve)
+          case "channel"     => singleObject("Channel", ChannelId.apply)(_.resolve)
+          case "guild"       => Right(pprint2(m.guild))
+          case "voice_state" => singleObject("VoiceState", UserId.apply)(m.guild.voiceStateFor)
+          case _             => Left("Unknown debug object")
+        }
+
+        res match {
+          case Right(str) =>
+            val message = str.plainText
+
+            if (message.length > 2000) {
+              //TODO: Allow sending raw bytes in files in AckCord
+              Resource
+                .make(IO(Files.createTempFile(Paths.get("tempFiles"), "message", ".txt")))(f => IO(Files.delete(f)))
+                .use(file => IO(requests.singleIgnore(m.tChannel.sendMessage(files = Seq(file)))))
+                .unsafeRunSync()
+
+            } else {
+              requests.singleIgnore(m.tChannel.sendMessage(message))
+            }
+          case Left(err) => requests.singleIgnore(m.tChannel.sendMessage(s"Failed to get debug info: $err"))
+        }
+      }
 }

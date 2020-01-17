@@ -72,6 +72,7 @@ lazy val miko = project
     libraryDependencies += "org.bouncycastle" % "bcpg-jdk15on"     % "1.64",
     libraryDependencies += "com.vmunier"      %% "scalajs-scripts" % "1.1.4",
     libraryDependencies += "com.lihaoyi"      %% "scalatags"       % "0.7.0",
+    libraryDependencies += "com.lihaoyi"      %% "pprint"          % "0.5.6",
     libraryDependencies += "org.webjars.npm"  % "bulma"            % "0.7.5",
     libraryDependencies += "org.webjars.npm"  % "bulma-divider"    % "2.0.1",
     libraryDependencies += "org.webjars.npm"  % "bulma-slider"     % "2.0.0",
