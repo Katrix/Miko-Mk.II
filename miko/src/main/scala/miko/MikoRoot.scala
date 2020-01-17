@@ -206,6 +206,7 @@ class MikoRoot[F[_]: Transactor: Mode: Streamable: Effect](
     connector.runNewCommand(mainPrefix("shiftChannels"), genericCommands.shiftChannels)
     connector.runNewCommand(mainPrefix("genKeys"), genericCommands.genKeys)
     connector.runNewCommand(mainPrefix("info"), genericCommands.info)
+    connector.runNewCommand(mainPrefix("debug"), genericCommands.debug)
 
     val imageCommands = new ImageCommands(requests, imageCache)
     connector.runNewCommand(mainPrefix("safebooru"), imageCommands.safebooru)
