@@ -14,7 +14,7 @@ import cats.syntax.all._
 import doobie.util.transactor.Transactor
 import ackcord.data.User
 import ackcord.requests.OAuth
-import ackcord.requests.{RequestHelper, RequestResponse}
+import ackcord.requests.{Requests, RequestResponse}
 import ackcord.requests.GetCurrentUser
 import ackcord.util.GuildRouter
 import akka.stream.{FlowShape, SourceShape}
@@ -48,7 +48,7 @@ import play.api.http.websocket.{Message, TextMessage}
 import play.twirl.api.Html
 
 class WebController(val cacheStorage: ActorRef[SGFCPool.Msg[CacheStorage.Command, CacheSnapshot]])(
-    implicit requests: RequestHelper,
+    implicit requests: Requests,
     webEvents: WebEvents,
     mikoConfig: MikoConfig,
     xa: Transactor[IO],

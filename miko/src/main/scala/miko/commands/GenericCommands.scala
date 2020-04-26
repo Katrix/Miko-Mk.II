@@ -42,14 +42,14 @@ class GenericCommands[G[_]: Transactor: Mode: Streamable](vtStreams: VoiceTextSt
       }(scala.concurrent.ExecutionContext.global)
   }
 
-  val cleanup: Command[NotUsed] = GuildCommand.streamed {
+  val cleanup: Command[NotUsed] = GuildCommand.toSink {
     Flow[GuildCommandMessage[NotUsed]]
       .map(m => m.guild -> m.cache)
       .via(vtStreams.cleanupGuild)
       .to(requests.sinkIgnore[Any])
   }
 
-  val shiftChannels: Command[NotUsed] = GuildCommand.streamed {
+  val shiftChannels: Command[NotUsed] = GuildCommand.toSink {
     Flow[GuildCommandMessage[NotUsed]]
       .map(m => m.guild -> m.cache)
       .via(vtStreams.shiftChannelsGuild)
@@ -64,13 +64,13 @@ class GenericCommands[G[_]: Transactor: Mode: Streamable](vtStreams: VoiceTextSt
         MessageParser.optional(MessageParser.literal("--force-new")).map(_.isDefined)
       ).tupled
     )
-    .streamed {
+    .toSink {
       Flow[GuildCommandMessage[(String, Boolean)]]
         .flatMapConcat { implicit m =>
           //TODO: Custom error for parsers with name and stuff
           val (password, forceNewKey) = m.parsed
           Streamable[G].toSource(
-            DBMemoizedAccess.getGuildSettings(m.guild.id).map((_, password, m.tChannel, m.guild, forceNewKey))
+            DBMemoizedAccess.getGuildSettings(m.guild.id).map((_, password, m.textChannel, m.guild, forceNewKey))
           )
         }
         .flatMapConcat {
@@ -81,16 +81,17 @@ class GenericCommands[G[_]: Transactor: Mode: Streamable](vtStreams: VoiceTextSt
               case PermissionOverwrite(id, tpe, allow, _) =>
                 def hasAdminFor[K, V](
                     subjects: SnowflakeMap[K, V],
-                    construct: Long => SnowflakeType[K]
+                    construct: UserOrRoleId => SnowflakeType[K]
                 )(perms: V => Permission) =
                   subjects.get(construct(id)).forall(perms(_).hasPermissions(Permission.Administrator))
 
                 val (hasAdmin, isOwner) = tpe match {
                   case PermissionOverwriteType.Member =>
-                    (hasAdminFor(guild.members, UserId.apply)(_.permissions(guild)), guild.ownerId == id)
+                    (hasAdminFor(guild.members, UserId(_))(_.permissions(guild)), guild.ownerId == id)
 
                   case PermissionOverwriteType.Role =>
-                    (hasAdminFor(guild.roles, RoleId.apply)(_.permissions), false)
+                    (hasAdminFor(guild.roles, RoleId(_))(_.permissions), false)
+                  case _ => (false, false)
                 }
 
                 !allow.hasPermissions(Permission.ViewChannel) || (isOwner || hasAdmin)
@@ -177,7 +178,7 @@ class GenericCommands[G[_]: Transactor: Mode: Streamable](vtStreams: VoiceTextSt
       )
     )
 
-    m.tChannel.sendMessage(embed = Some(embed))
+    m.textChannel.sendMessage(embed = Some(embed))
   }
 
   private def pprintAdditionalHandlers: PartialFunction[Any, Tree] = {
@@ -219,11 +220,12 @@ class GenericCommands[G[_]: Transactor: Mode: Streamable](vtStreams: VoiceTextSt
         }
 
         val res = tpe match {
-          case "user"        => singleObject("User", UserId.apply)(_.resolve)
-          case "member"      => singleObject("Member", UserId.apply)(_.resolveMember(m.guild.id))
-          case "role"        => singleObject("Role", RoleId.apply)(_.resolve)
-          case "channel"     => singleObject("Channel", ChannelId.apply)(_.resolve)
-          case "guild"       => Right(pprint2(m.guild))
+          case "user"    => singleObject("User", UserId.apply)(_.resolve)
+          case "member"  => singleObject("Member", UserId.apply)(_.resolveMember(m.guild.id))
+          case "role"    => singleObject("Role", RoleId.apply)(_.resolve)
+          case "channel" => singleObject("Channel", ChannelId.apply)(_.resolve)
+          case "guild" =>
+            if (identifier.isDefined) singleObject("Guild", GuildId.apply)(_.resolve) else Right(pprint2(m.guild))
           case "voice_state" => singleObject("VoiceState", UserId.apply)(m.guild.voiceStateFor)
           case _             => Left("Unknown debug object")
         }
@@ -236,13 +238,13 @@ class GenericCommands[G[_]: Transactor: Mode: Streamable](vtStreams: VoiceTextSt
               //TODO: Allow sending raw bytes in files in AckCord
               Resource
                 .make(IO(Files.createTempFile(Paths.get("tempFiles"), "message", ".txt")))(f => IO(Files.delete(f)))
-                .use(file => IO(requests.singleIgnore(m.tChannel.sendMessage(files = Seq(file)))))
+                .use(file => IO(requests.singleIgnore(m.textChannel.sendMessage(files = Seq(file)))))
                 .unsafeRunSync()
 
             } else {
-              requests.singleIgnore(m.tChannel.sendMessage(message))
+              requests.singleIgnore(m.textChannel.sendMessage(message))
             }
-          case Left(err) => requests.singleIgnore(m.tChannel.sendMessage(s"Failed to get debug info: $err"))
+          case Left(err) => requests.singleIgnore(m.textChannel.sendMessage(s"Failed to get debug info: $err"))
         }
       }
 }

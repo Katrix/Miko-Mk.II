@@ -20,7 +20,7 @@ class ImageCommands(requests: Requests, imageCache: ActorRef[ImageCache.Command]
 
   implicit val timeout: Timeout = Timeout(30.seconds)
 
-  def imageCommand(tpe: ImageType): Command[Option[String]] = Command.parsing[Option[String]].streamed {
+  def imageCommand(tpe: ImageType): Command[Option[String]] = Command.parsing[Option[String]].toSink {
     Flow[CommandMessage[Option[String]]]
       .flatMapConcat { implicit m =>
         def descEmbed(str: String): Some[OutgoingEmbed] = Some(OutgoingEmbed(description = Some(str)))
@@ -33,7 +33,7 @@ class ImageCommands(requests: Requests, imageCache: ActorRef[ImageCache.Command]
               (_, a) => ImageCache.ImageRequest(tpe, tags, allowExplicit = false, a)
             )
           )
-        val request = m.tChannel.sendMessage(embed = descEmbed("Loading picture..."))
+        val request = m.textChannel.sendMessage(embed = descEmbed("Loading picture..."))
         val msg     = Source.single(request).via(RequestStreams.removeContext(requests.flowSuccess))
 
         cachedImage.zip(msg)

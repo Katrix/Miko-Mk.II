@@ -2,7 +2,14 @@ package miko.music
 
 import java.util.concurrent.ThreadLocalRandom
 
-import ackcord.data.{ChannelId, Guild, GuildId, OutgoingEmbed, TChannel, TGuildChannel, UserId}
+import ackcord.data.{
+  Guild,
+  GuildId,
+  OutgoingEmbed,
+  TextGuildChannel,
+  UserId,
+  VoiceGuildChannelId
+}
 import ackcord.syntax._
 import ackcord.{Cache, CacheSnapshot, Requests}
 import akka.actor.typed._
@@ -34,15 +41,15 @@ class GuildMusicHandler[G[_]: Mode: Effect: Transactor](
     extends AbstractBehavior[GuildMusicHandler.Command](ctx) {
   import GuildMusicHandler._
 
-  val connectedPlayers = mutable.HashMap.empty[ChannelId, (ActorRef[ChannelMusicHandler.Command], MusicCmdInfo)]
-  val channelIdById    = mutable.HashMap.empty[Long, ChannelId]
-  val idByChannelId    = mutable.HashMap.empty[ChannelId, Long]
+  val connectedPlayers = mutable.HashMap.empty[VoiceGuildChannelId, (ActorRef[ChannelMusicHandler.Command], MusicCmdInfo)]
+  val channelIdById    = mutable.HashMap.empty[Long, VoiceGuildChannelId]
+  val idByChannelId    = mutable.HashMap.empty[VoiceGuildChannelId, Long]
 
-  def textChannel(vChannelId: ChannelId, current: Option[TChannel]): Option[TChannel] = {
+  def textChannel(vChannelId: VoiceGuildChannelId, current: Option[TextGuildChannel]): Option[TextGuildChannel] = {
     for {
       guild <- guildId.resolve(lastCacheSnapshot)
       ch <- guild
-        .vChannelById(vChannelId)
+        .voiceChannelById(vChannelId)
         .flatMap(
           VoiceTextStreams
             .getTextChannel(_, guild)
@@ -52,7 +59,7 @@ class GuildMusicHandler[G[_]: Mode: Effect: Transactor](
     } yield ch
   }
 
-  def createHandler(vChannelId: ChannelId): ActorRef[ChannelMusicHandler.Command] = {
+  def createHandler(vChannelId: VoiceGuildChannelId): ActorRef[ChannelMusicHandler.Command] = {
     import context.executionContext
 
     val player = playerManager.createPlayer()
@@ -199,23 +206,23 @@ object GuildMusicHandler {
     Behaviors.setup(ctx => new GuildMusicHandler(ctx, guildId, playerManager, topCache, slaveHandler, audioItemLoader))
 
   case class MusicCmdInfo(
-      tChannel: Option[TGuildChannel],
-      vChannelId: ChannelId,
+      tChannel: Option[TextGuildChannel],
+      vChannelId: VoiceGuildChannelId,
       cacheSnapshot: Option[CacheSnapshot]
   )
 
   sealed trait Command
-  case object Shutdown                                   extends Command
-  case class PlayerMoved(from: ChannelId, to: ChannelId) extends Command
-  private case class ChannelStopping(id: Long)           extends Command
+  case object Shutdown                                                       extends Command
+  case class PlayerMoved(from: VoiceGuildChannelId, to: VoiceGuildChannelId) extends Command
+  private case class ChannelStopping(id: Long)                               extends Command
 
   sealed trait FailedToStartReason
   case object AlreadyConnected extends FailedToStartReason
   case object NoSlaves         extends FailedToStartReason
 
-  case class FailedToStart(reason: FailedToStartReason, vChannelId: ChannelId) extends Command
+  case class FailedToStart(reason: FailedToStartReason, vChannelId: VoiceGuildChannelId) extends Command
 
-  case class SetDefaultVolume(volume: Int, tChannel: Option[TGuildChannel], cacheSnapshot: Option[CacheSnapshot])
+  case class SetDefaultVolume(volume: Int, tChannel: Option[TextGuildChannel], cacheSnapshot: Option[CacheSnapshot])
       extends Command
 
   case class GuildMusicCommandWrapper(command: MusicCommand, info: MusicCmdInfo) extends Command

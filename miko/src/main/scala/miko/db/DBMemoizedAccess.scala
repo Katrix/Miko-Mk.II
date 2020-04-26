@@ -2,7 +2,7 @@ package miko.db
 
 import cats.syntax.apply._
 import doobie.Transactor
-import ackcord.data.{ChannelId, GuildId, MessageId}
+import ackcord.data.{GuildId, MessageId, TextGuildChannelId}
 import cats.effect.Bracket
 import miko.settings._
 import miko.web.forms.WebSettings
@@ -39,7 +39,7 @@ object DBMemoizedAccess {
   def updateKey[F[_]: Mode: Transactor](
       guildId: GuildId,
       pub: String,
-      privateChannelId: ChannelId,
+      privateChannelId: TextGuildChannelId,
       privateMsgId: MessageId
   )(implicit cache: Cache[GuildSettings], F: Bracket[F, Throwable]): F[Int] =
     cache.remove(guildId) *> DBAccess.updateKey(guildId, pub, privateChannelId, privateMsgId)

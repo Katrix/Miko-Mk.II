@@ -35,7 +35,9 @@ class GuestController(
       verified = Some(true),
       email = None,
       flags = None,
-      premiumType = None
+      premiumType = None,
+      system = None,
+      locale = None
     )
 
     val users = SnowflakeMap.from(scala.Range(0, 99).map { i =>
@@ -49,7 +51,9 @@ class GuestController(
         verified = Some(true),
         email = None,
         flags = None,
-        premiumType = None
+        premiumType = None,
+        system = None,
+        locale = None
       )
     }) + (botId -> botUser)
 
@@ -108,14 +112,15 @@ class GuestController(
 
     val messages = SnowflakeMap.from(
       scala.Range(0, 10).map { i =>
-        ChannelId(i) -> SnowflakeMap.from(scala.Range(0, 100).map {
+        ChannelId(i).asChannelId[TextChannel] -> SnowflakeMap.from(scala.Range(0, 100).map {
           j =>
-            MessageId(j) -> Message(
+          val userId = members.keys.toSeq(Random.nextInt(members.size))
+            MessageId(j) -> GuildMessage(
               id = MessageId(j),
-              channelId = ChannelId(i),
-              guildId = None,
-              authorId = RawSnowflake(members.keys.toSeq(Random.nextInt(members.size))),
-              member = None,
+              channelId = TextGuildChannelId(i),
+              guildId = guildId,
+              authorId = RawSnowflake(userId),
+              member = members(userId),
               isAuthorUser = true,
               content = Random.alphanumeric.take(Random.nextInt(16)).mkString,
               timestamp = OffsetDateTime.now(),
@@ -131,21 +136,24 @@ class GuestController(
               pinned = false,
               messageType = MessageType.Default,
               activity = None,
-              application = None
+              application = None,
+              mentionChannels = Nil,
+              messageReference = None,
+              flags = None
             )
         })
       }
     )
 
     val tChannels = SnowflakeMap.from(scala.Range(0, 10).map { i =>
-      ChannelId(i) -> NormalTGuildChannel(
-        id = ChannelId(i),
+      ChannelId(i).asChannelId[NormalTextGuildChannel] -> NormalTextGuildChannel(
+        id = ChannelId(i).asChannelId,
         guildId = guildId,
         name = s"TChannel$i",
         position = i,
         permissionOverwrites = SnowflakeMap.empty,
         topic = None,
-        lastMessageId = Some(messages(ChannelId(i)).lastKey),
+        lastMessageId = Some(messages(TextChannelId(i)).lastKey),
         rateLimitPerUser = None,
         nsfw = false,
         parentId = None,
@@ -154,8 +162,8 @@ class GuestController(
     })
 
     val vChannels = SnowflakeMap.from(scala.Range(10, 15).map { i =>
-      ChannelId(i) -> VGuildChannel(
-        id = ChannelId(i),
+      VoiceGuildChannelId(i) -> VoiceGuildChannel(
+        id = ChannelId(i).asChannelId,
         guildId = guildId,
         name = s"VChannel$i",
         position = i,
@@ -214,7 +222,7 @@ class GuestController(
       memberCount = members.size,
       voiceStates = voiceStates,
       members = members,
-      channels = channels,
+      channels = SnowflakeMap.from(channels), //TODO: Explore why this broke in AckCord
       presences = SnowflakeMap.empty,
       maxPresences = 1000,
       maxMembers = None,
@@ -223,7 +231,11 @@ class GuestController(
       banner = None,
       premiumTier = PremiumTier.None,
       premiumSubscriptionCount = Some(0),
-      preferredLocale = None
+      preferredLocale = None,
+      discoverySplash = None,
+      systemChannelFlags = SystemChannelFlags.None,
+      rulesChannelId = None,
+      publicUpdatesChannelId = None
     )
 
     GuildViewInfo(
@@ -243,7 +255,9 @@ class GuestController(
         messageMap = messages,
         lastTypedMap = SnowflakeMap.empty,
         userMap = users,
-        banMap = SnowflakeMap.empty
+        banMap = SnowflakeMap.empty,
+        seq = 0,
+        creationProcessor = MemoryCacheSnapshot.defaultCacheProcessor
       )
     )
   }

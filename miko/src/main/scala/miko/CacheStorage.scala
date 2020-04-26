@@ -88,6 +88,11 @@ object CacheStorage {
 
   import io.circe.generic.auto._
 
+  implicit private val cacheProcessorEncoder: Encoder[MemoryCacheSnapshot.CacheProcessor] =
+    (_: MemoryCacheSnapshot.CacheProcessor) => Json.Null
+  implicit private val cacheProcessorDecoder: Decoder[MemoryCacheSnapshot.CacheProcessor] =
+    (_: HCursor) => Right(MemoryCacheSnapshot.defaultCacheProcessor)
+
   implicit private val memoryCacheSnapshotEncoder: Encoder[MemoryCacheSnapshot] = generic.semiauto.deriveEncoder
   implicit private val memoryCacheSnapshotDecoder: Decoder[MemoryCacheSnapshot] = generic.semiauto.deriveDecoder
 }

@@ -1,6 +1,6 @@
 package miko.web.views
 
-import ackcord.data.{ChannelId, Permission, TGuildChannel}
+import ackcord.data.{Permission, TextGuildChannel, TextGuildChannelId}
 import miko.settings.{GuildSettings, VTPermissionValue}
 import miko.web.forms.WebSettings
 import miko.web.layouts.MikoBundle._
@@ -29,7 +29,7 @@ object settings {
   )(implicit info: GuildViewInfo, header: RequestHeader, messages: Messages): String = {
     val vtSettings = guildSettings.vtSettings
     val tChannels = info.guild.channels.collect {
-      case (k, ch: TGuildChannel) => k -> ch
+      case (k, ch: TextGuildChannel) => k -> ch
     }
 
     def showErrors(key: String) =
@@ -37,7 +37,7 @@ object settings {
         <.p(^.cls := "help is-danger", error.format)
       }
 
-    def tChannelSelection(current: Option[ChannelId], id: String, name: String) =
+    def tChannelSelection(current: Option[TextGuildChannelId], id: String, name: String) =
       control(
         <.div(^.cls := "select")(
           <.select(^.id := id, ^.name := name)(
@@ -45,7 +45,7 @@ object settings {
             tChannels.toSeq
               .sortBy(_._2.position)
               .map(t => t._1 -> t._2.name)
-              .map { case (id, name) => <.option(^.value := id.toLong, ^.selected.when(current.contains(id)), name) }
+              .map { case (id, name) => <.option(^.value := id.toUnsignedLong, ^.selected.when(current.contains(id)), name) }
           )
         )
       )
@@ -175,7 +175,7 @@ object settings {
                 .collect {
                   case (id, chan) if chan.name.endsWith("-voice") =>
                     <.option(
-                      ^.value := id.toLong,
+                      ^.value := id.toUnsignedLong,
                       ^.selected.when(vtSettings.destructiveBlacklist.contains(id)),
                       chan.name
                     )

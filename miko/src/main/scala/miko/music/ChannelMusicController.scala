@@ -34,14 +34,14 @@ class ChannelMusicController(
     timers: TimerScheduler[ChannelMusicController.Command],
     player: AudioPlayer,
     guildId: GuildId,
-    firstVChannelId: ChannelId,
+    firstVChannelId: VoiceGuildChannelId,
     initialCacheSnapshot: CacheSnapshot,
     cache: Cache,
     slaveUserId: UserId,
     loader: ActorRef[AudioItemLoader.Command],
     handler: ActorRef[GuildMusicHandler.Command]
 )(
-    implicit requests: RequestHelper,
+    implicit requests: Requests,
     webEvents: WebEvents
 ) extends AbstractBehavior[ChannelMusicController.Command](ctx) {
   import ChannelMusicController._
@@ -68,7 +68,7 @@ class ChannelMusicController(
   private val playlist: mutable.Buffer[AudioTrack] = mutable.Buffer.empty
   private var shouldLoop: Boolean                  = false
 
-  private var vChannelId: ChannelId            = firstVChannelId
+  private var vChannelId: VoiceGuildChannelId  = firstVChannelId
   private var lastCacheSnapshot: CacheSnapshot = initialCacheSnapshot
 
   player.addListener(new LavaplayerHandler.AudioEventSender(context.self, LavaplayerEvent))
@@ -90,11 +90,11 @@ class ChannelMusicController(
 
   timers.startTimerWithFixedDelay("CheckContinue", CheckContinuePlay, 1.minute)
 
-  def textChannel(current: Option[TChannel]): Option[TChannel] = {
+  def textChannel(current: Option[TextGuildChannel]): Option[TextGuildChannel] = {
     for {
       guild <- guildId.resolve(lastCacheSnapshot)
       ch <- guild
-        .vChannelById(vChannelId)
+        .voiceChannelById(vChannelId)
         .flatMap(
           VoiceTextStreams
             .getTextChannel(_, guild)
@@ -106,7 +106,7 @@ class ChannelMusicController(
 
   def webEventApplicableUsers: Set[UserId] =
     vChannelId
-      .vResolve(guildId)(lastCacheSnapshot)
+      .resolve(guildId)(lastCacheSnapshot)
       .map(_.connectedUsers(lastCacheSnapshot))
       .getOrElse(Nil)
       .map(_.id)
@@ -516,13 +516,13 @@ object ChannelMusicController {
   def apply(
       player: AudioPlayer,
       guildId: GuildId,
-      firstVChannelId: ChannelId,
+      firstVChannelId: VoiceGuildChannelId,
       initialCacheSnapshot: CacheSnapshot,
       cache: Cache,
       slaveUserId: UserId,
       loader: ActorRef[AudioItemLoader.Command],
       handler: ActorRef[GuildMusicHandler.Command]
-  )(implicit requests: RequestHelper, webEvents: WebEvents): Behavior[Command] =
+  )(implicit requests: Requests, webEvents: WebEvents): Behavior[Command] =
     Behaviors.setup { ctx =>
       Behaviors.withTimers { timers =>
         new ChannelMusicController(
@@ -552,7 +552,7 @@ object ChannelMusicController {
       extends Command
   private case class LavaplayerEvent(event: AudioEvent) extends Command
 
-  private case class VChannelMoved(newVChannelId: ChannelId) extends Command
+  private case class VChannelMoved(newVChannelId: VoiceGuildChannelId) extends Command
   case class SetCacheSnapshot(cacheSnapshot: CacheSnapshot)  extends Command
 
   def listenForReactions(
@@ -561,14 +561,14 @@ object ChannelMusicController {
       actor: ActorRef[Command]
   ): RunnableGraph[UniqueKillSwitch] = {
     def validReactionEvent[M <: APIMessage](m: M)(user: M => User, emoji: M => PartialEmoji): Boolean =
-      user(m).id != m.cache.current.botUser.id && EmojiCommand.commandsByUnicode.contains(emoji(m).name)
+      user(m).id != m.cache.current.botUser.id && EmojiCommand.commandsByUnicode.exists(t => emoji(m).name.contains(t._1))
 
     cache.subscribeAPI
       .collect {
         case m: APIMessage.MessageReactionAdd if validReactionEvent(m)(_.user, _.emoji) =>
-          EmojiCommand.commandsByUnicode(m.emoji.name).command -> m
+          EmojiCommand.commandsByUnicode(m.emoji.name.get).command -> m
         case m: APIMessage.MessageReactionRemove if validReactionEvent(m)(_.user, _.emoji) =>
-          EmojiCommand.commandsByUnicode(m.emoji.name).command -> m
+          EmojiCommand.commandsByUnicode(m.emoji.name.get).command -> m
       }
       .viaMat(KillSwitches.single)(Keep.right)
       .mapConcat {
@@ -576,10 +576,10 @@ object ChannelMusicController {
           implicit val c: CacheSnapshot = m.cache.current
 
           val res = for {
-            tCh        <- m.channel.asTGuildChannel
+            tCh        <- m.channel.asTextGuildChannel
             guild      <- tCh.guild
             voiceState <- guild.voiceStateFor(slaveUserId)
-            vCh        <- voiceState.vChannel.flatMap(_.asVGuildChannel) //TODO: Should be of type VGuildChannel
+            vCh        <- voiceState.voiceChannel.flatMap(_.asVGuildChannel) //TODO: Should be of type VGuildChannel
             if VoiceTextStreams.getTextVoiceChannelName(vCh) == tCh.name
           } yield (cmd, m, tCh, vCh)
 
@@ -595,7 +595,7 @@ object ChannelMusicController {
       .to(ActorSink.actorRef(actor, Shutdown, ShutdownErr))
   }
 
-  def guiControls(implicit requests: RequestHelper): Sink[RawMessage, NotUsed] = {
+  def guiControls(implicit requests: Requests): Sink[RawMessage, NotUsed] = {
     Flow[RawMessage]
       .map(_.toMessage)
       .statefulMapConcat { () =>
@@ -614,6 +614,6 @@ object ChannelMusicController {
         }
       }
       .throttle(1, 0.5.second) //TODO: Figure out why this is needed
-      .to(requests.sinkIgnore(RequestHelper.RequestProperties.ordered))
+      .to(requests.sinkIgnore(Requests.RequestProperties.ordered))
   }
 }

@@ -32,7 +32,7 @@ class MusicCommands(
           val botVChannelId = m.guild.voiceStateFor(botUser.id).flatMap(_.channelId)
 
           val botIsInVChannel     = botVChannelId.isDefined
-          val isBotInSameVChannel = botVChannelId.contains(m.vChannel.id)
+          val isBotInSameVChannel = botVChannelId.contains(m.voiceChannel.id)
 
           if (isBotInSameVChannel) Right(m)
           else if (botIsInVChannel) Left(Some(CommandError.mk[A]("You are in a different voice channel", m)))
@@ -47,7 +47,7 @@ class MusicCommands(
     GuildVoiceCommand.andThen(inVoiceChannelWithBot)
 
   def cmdInfo(m: VoiceGuildMemberCommandMessage[_]): GuildMusicHandler.MusicCmdInfo =
-    GuildMusicHandler.MusicCmdInfo(Some(m.tChannel), m.vChannel.id, Some(m.cache))
+    GuildMusicHandler.MusicCmdInfo(Some(m.textChannel), m.voiceChannel.id, Some(m.cache))
 
   def musicCommand(
       command: GuildMusicCommand,
@@ -71,7 +71,7 @@ class MusicCommands(
 
   val defVolume: Command[Int] = GuildCommand.parsing[Int].withSideEffects { implicit m =>
     musicHandler ! GuildRouter
-      .SendToGuildActor(m.guild.id, GuildMusicHandler.SetDefaultVolume(m.parsed, Some(m.tChannel), Some(m.cache)))
+      .SendToGuildActor(m.guild.id, GuildMusicHandler.SetDefaultVolume(m.parsed, Some(m.textChannel), Some(m.cache)))
   }
 
   val stop: Command[NotUsed] = MusicCommand.withSideEffects { implicit m =>

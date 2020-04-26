@@ -14,7 +14,7 @@ class Slave(
     token: String
 ) extends AbstractSlave(ctx, timers) {
 
-  val cache: Cache                          = Cache.create
+  val cache: Cache                          = Cache.create()
   var shard: ActorRef[DiscordShard.Command] = _
 
   def logInIfNeeded(): Unit =

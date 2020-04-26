@@ -106,7 +106,7 @@ object VtPermsSettings {
   import cats.syntax.semigroup._
 
   def unpackPermValue(perm: Permission, allow: Permission, deny: Permission) =
-    VTPermissionValue(Permission.fromLong(allow & perm), Permission.fromLong(deny & perm))
+    VTPermissionValue(Permission.fromLong(allow.toLong & perm.toLong), Permission.fromLong(deny.toLong & perm.toLong))
 
   val permMapping: Mapping[VTPermissionValue] = mapping(
     "createInstantInvite" -> permValue(Permission.CreateInstantInvite),

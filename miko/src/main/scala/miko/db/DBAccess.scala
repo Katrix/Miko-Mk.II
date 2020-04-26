@@ -124,7 +124,7 @@ object DBAccess {
   private[db] def updateKey[F[_]](
       guildId: GuildId,
       pub: String,
-      privateChannelId: ChannelId,
+      privateChannelId: TextGuildChannelId,
       privateMsgId: MessageId
   )(implicit xa: Transactor[F], F: Bracket[F, Throwable]): F[Int] =
     sql"""|UPDATE guild_settings SET public_key = dearmor($pub), private_key_channel_id = $privateChannelId,
@@ -132,7 +132,7 @@ object DBAccess {
 
   def insertVTMsg[F[_]](
       msg: Message,
-      channel: TGuildChannel,
+      channel: TextGuildChannel,
       category: Option[GuildCategory],
       user: User,
       key: IndexedSeq[Byte]
@@ -145,7 +145,7 @@ object DBAccess {
 
   def updateVTMsg[F[_]](
       msg: Message,
-      channel: TGuildChannel,
+      channel: TextGuildChannel,
       category: Option[GuildCategory],
       user: User,
       key: IndexedSeq[Byte]

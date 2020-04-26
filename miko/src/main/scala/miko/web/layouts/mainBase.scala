@@ -52,7 +52,7 @@ object mainBase {
       ),
       <.script(
         cspNonce,
-        raw(s"""GUILD_ID = "${info.guildId.toLong}";""")
+        raw(s"""GUILD_ID = "${info.guildId.toUnsignedLong}";""")
       )
     )
 

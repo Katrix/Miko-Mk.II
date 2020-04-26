@@ -1,9 +1,9 @@
 package miko
 
 import ackcord.cachehandlers.CacheTypeRegistry
-import ackcord.data.VGuildChannel
 import ackcord.gateway.{GatewayEvent, GatewaySettings}
 import ackcord.commands.CommandConnector
+import ackcord.data.VoiceGuildChannel
 import ackcord.requests.{BotAuthentication, Ratelimiter, Requests}
 import ackcord.util.{GuildRouter, Streamable}
 import ackcord.{APIMessage, Cache, CacheSnapshot, CacheState, DiscordShard}
@@ -57,7 +57,7 @@ class MikoRoot[F[_]: Transactor: Mode: Streamable: Effect](
     millisecondPrecision = false,
     relativeTime = true
   )
-  implicit val cache: Cache = Cache.create
+  implicit val cache: Cache = Cache.create()
 
   val cacheStorage: ActorRef[SGFCPool.Msg[CacheStorage.Command, CacheSnapshot]] =
     context.spawn(CacheStorage(cache), "CacheStorage")
@@ -250,7 +250,7 @@ class MikoRoot[F[_]: Transactor: Mode: Streamable: Effect](
 
     cache.subscribeAPI
       .collect {
-        case APIMessage.ChannelUpdate(vChannel: VGuildChannel, CacheState(current, previous)) =>
+        case APIMessage.ChannelUpdate(vChannel: VoiceGuildChannel, CacheState(current, previous)) =>
           (vChannel, current, previous)
       }
       .to(vtStreams.channelUpdate)

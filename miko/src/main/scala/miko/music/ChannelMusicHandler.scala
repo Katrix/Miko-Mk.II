@@ -3,10 +3,10 @@ package miko.music
 import java.util.concurrent.ThreadLocalRandom
 
 import ackcord.{Cache, CacheSnapshot}
-import ackcord.data.{ChannelId, GuildId, UserId}
+import ackcord.data.{GuildId, UserId, VoiceGuildChannelId}
 import ackcord.gateway.{GatewayMessage, VoiceStateUpdate, VoiceStateUpdateData}
 import ackcord.lavaplayer.LavaplayerHandler
-import ackcord.requests.RequestHelper
+import ackcord.requests.Requests
 import akka.actor.typed._
 import akka.actor.typed.scaladsl._
 import akka.stream.scaladsl.Source
@@ -21,7 +21,7 @@ object ChannelMusicHandler {
       stash: StashBuffer[Command],
       player: AudioPlayer,
       guildId: GuildId,
-      firstVChannelId: ChannelId,
+      firstVChannelId: VoiceGuildChannelId,
       topCache: Cache,
       loader: ActorRef[AudioItemLoader.Command],
       slaveHandler: ActorRef[SlaveHandler.Command],
@@ -45,13 +45,13 @@ object ChannelMusicHandler {
   def apply(
       player: AudioPlayer,
       guildId: GuildId,
-      firstVChannelId: ChannelId,
+      firstVChannelId: VoiceGuildChannelId,
       topCache: Cache,
       loader: ActorRef[AudioItemLoader.Command],
       slaveHandler: ActorRef[SlaveHandler.Command],
       handler: ActorRef[GuildMusicHandler.Command],
       initialCacheSnapshot: CacheSnapshot
-  )(implicit requests: RequestHelper, webEvents: WebEvents): Behavior[Command] = Behaviors.setup { ctx =>
+  )(implicit requests: Requests, webEvents: WebEvents): Behavior[Command] = Behaviors.setup { ctx =>
     Behaviors.withStash(32) { stash =>
       val reservationId = ThreadLocalRandom.current().nextLong()
       slaveHandler ! SlaveHandler.ReserveSlave(
@@ -85,7 +85,7 @@ object ChannelMusicHandler {
   private def initializing(
       parameters: Parameters,
       state: State
-  )(implicit requests: RequestHelper, webEvents: WebEvents): Behavior[Command] = {
+  )(implicit requests: Requests, webEvents: WebEvents): Behavior[Command] = {
     import parameters._
 
     def tryStart(state: State) = state match {
@@ -120,7 +120,7 @@ object ChannelMusicHandler {
       case GotSlave(replyTo, slaveCache) =>
         val lavaplayerHandler =
           context.spawn(LavaplayerHandler(player, guildId, slaveCache), "LavaplayerHandler")
-        lavaplayerHandler ! LavaplayerHandler.ConnectVChannel(
+        lavaplayerHandler ! LavaplayerHandler.ConnectVoiceChannel(
           firstVChannelId,
           force = false,
           context.messageAdapter {

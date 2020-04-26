@@ -2,7 +2,7 @@ import sbtcrossproject.CrossPlugin.autoImport.{crossProject, CrossType}
 
 lazy val sharedSettings = Seq(
   organization := "net.katsstuff",
-  scalaVersion := "2.13.1",
+  scalaVersion := "2.13.2",
   scalacOptions ++= Seq(
     "-deprecation",
     "-encoding",
@@ -19,10 +19,10 @@ lazy val sharedSettings = Seq(
   addCompilerPlugin("org.typelevel" %% "kind-projector" % "0.11.0" cross CrossVersion.full)
 )
 
-lazy val ackCordVersion    = "0.16.0-SNAPSHOT"
-lazy val akkaVersion       = "2.6.1"
+lazy val ackCordVersion    = "0.16.1"
+lazy val akkaVersion       = "2.6.4"
 lazy val akkaHttpVersion   = "10.1.11"
-lazy val doobieVersion     = "0.8.6"
+lazy val doobieVersion     = "0.9.0"
 lazy val scalacacheVersion = "0.28.0"
 
 lazy val mikoVersion = "0.1"
@@ -69,10 +69,10 @@ lazy val miko = project
       "com.github.cb372" %% "scalacache-caffeine"    % scalacacheVersion,
       "com.github.cb372" %% "scalacache-cats-effect" % scalacacheVersion
     ),
-    libraryDependencies += "org.bouncycastle" % "bcpg-jdk15on"     % "1.64",
+    libraryDependencies += "org.bouncycastle" % "bcpg-jdk15on"     % "1.65",
     libraryDependencies += "com.vmunier"      %% "scalajs-scripts" % "1.1.4",
-    libraryDependencies += "com.lihaoyi"      %% "scalatags"       % "0.7.0",
-    libraryDependencies += "com.lihaoyi"      %% "pprint"          % "0.5.6",
+    libraryDependencies += "com.lihaoyi"      %% "scalatags"       % "0.9.0",
+    libraryDependencies += "com.lihaoyi"      %% "pprint"          % "0.5.9",
     libraryDependencies += "org.webjars.npm"  % "bulma"            % "0.7.5",
     libraryDependencies += "org.webjars.npm"  % "bulma-divider"    % "2.0.1",
     libraryDependencies += "org.webjars.npm"  % "bulma-slider"     % "2.0.0",

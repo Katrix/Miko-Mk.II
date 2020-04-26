@@ -8,11 +8,11 @@ import miko.MikoProtocol._
 
 case class GuildSettings(
     guildId: GuildId,
-    botSpamChannel: Option[ChannelId] = None,
-    staffChannel: Option[ChannelId] = None,
+    botSpamChannel: Option[TextGuildChannelId] = None,
+    staffChannel: Option[TextGuildChannelId] = None,
     defaultMusicVolume: Int = 100,
     publicKey: Option[IndexedSeq[Byte]] = None,
-    secretKeyChannelId: Option[ChannelId] = None,
+    secretKeyChannelId: Option[TextGuildChannelId] = None,
     secretKeyMsgId: Option[MessageId] = None,
     requiresMention: Boolean = true,
     vtSettings: VoiceTextSettings = VoiceTextSettings()
@@ -29,7 +29,7 @@ case class VoiceTextSettings(
     permsLeave: VTPermissionValue = VTPermissionValue(),
     dynamicallyResizeChannels: Int = 0,
     destructiveEnabled: Boolean = false,
-    destructiveBlacklist: List[ChannelId] = Nil,
+    destructiveBlacklist: List[TextGuildChannelId] = Nil,
     saveDestructable: Boolean = false
 )
 object VoiceTextSettings {

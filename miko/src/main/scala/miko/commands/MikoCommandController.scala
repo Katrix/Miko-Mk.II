@@ -12,7 +12,7 @@ abstract class MikoCommandController(requests: Requests)(implicit config: MikoCo
   def botOwnerFilter[M[A] <: CommandMessage[A]]: CommandFunction[M, M] = new CommandFunction[M, M] {
     override def flow[A]: Flow[M[A], Either[Option[CommandError], M[A]], NotUsed] = Flow[M[A]].map { m =>
       if (m.message.authorUserId.exists(config.botOwners.contains(_))) Right(m)
-      else Left(Some(CommandError("Only bot owners can use this command", m.tChannel, m.cache)))
+      else Left(Some(CommandError("Only bot owners can use this command", m.textChannel, m.cache)))
     }
   }
 
