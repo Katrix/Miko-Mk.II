@@ -52,7 +52,8 @@ lazy val miko = project
     libraryDependencies ++= Seq(
       "net.katsstuff" %% "ackcord-core"            % ackCordVersion,
       "net.katsstuff" %% "ackcord-commands"        % ackCordVersion,
-      "net.katsstuff" %% "ackcord-lavaplayer-core" % ackCordVersion
+      "net.katsstuff" %% "ackcord-lavaplayer-core" % ackCordVersion,
+	  "com.sedmelluq" %  "lavaplayer"              % "1.3.50"
     ),
     libraryDependencies ++= Seq(evolutions, jdbc),
     libraryDependencies ++= Seq(

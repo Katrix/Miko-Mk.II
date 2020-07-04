@@ -102,13 +102,15 @@ class MusicCommands(
     musicHandler ! musicCommand(GuildMusicCommand.Shuffle, m)
   }
 
-  val ytQueue: Command[String] = GuildVoiceCommand.parsing[String].withSideEffects { implicit m =>
-    musicHandler ! musicCommand(GuildMusicCommand.Queue(s"ytsearch:${m.parsed}"), m)
-  }
+  val ytQueue: Command[MessageParser.RemainingAsString] =
+    GuildVoiceCommand.parsing[MessageParser.RemainingAsString].withSideEffects { implicit m =>
+      musicHandler ! musicCommand(GuildMusicCommand.Queue(s"ytsearch:${m.parsed.remaining}"), m)
+    }
 
-  val scQueue: Command[String] = GuildVoiceCommand.parsing[String].withSideEffects { implicit m =>
-    musicHandler ! musicCommand(GuildMusicCommand.Queue(s"scsearch:${m.parsed}"), m)
-  }
+  val scQueue: Command[MessageParser.RemainingAsString] =
+    GuildVoiceCommand.parsing[MessageParser.RemainingAsString].withSideEffects { implicit m =>
+      musicHandler ! musicCommand(GuildMusicCommand.Queue(s"scsearch:${m.parsed.remaining}"), m)
+    }
 
   val gui: Command[NotUsed] = MusicCommand.withSideEffects { implicit m =>
     musicHandler ! musicCommand(GuildMusicCommand.Gui, m)

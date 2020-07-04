@@ -6,9 +6,11 @@ import java.text.NumberFormat
 import ackcord._
 import ackcord.data._
 import ackcord.commands._
+import ackcord.requests.{CreateMessage, CreateMessageData, CreateMessageFile}
 import ackcord.syntax._
 import akka.NotUsed
 import akka.actor.CoordinatedShutdown
+import akka.http.scaladsl.model.ContentTypes
 import akka.stream.scaladsl.{Flow, Sink}
 import cats.effect.{Bracket, IO, Resource}
 import cats.syntax.all._
@@ -235,12 +237,12 @@ class GenericCommands[G[_]: Transactor: Mode: Streamable](vtStreams: VoiceTextSt
             val message = str.plainText
 
             if (message.length > 2000) {
-              //TODO: Allow sending raw bytes in files in AckCord
-              Resource
-                .make(IO(Files.createTempFile(Paths.get("tempFiles"), "message", ".txt")))(f => IO(Files.delete(f)))
-                .use(file => IO(requests.singleIgnore(m.textChannel.sendMessage(files = Seq(file)))))
-                .unsafeRunSync()
-
+              requests.singleIgnore(
+                CreateMessage(
+                  m.textChannel.id,
+                  CreateMessageData(files = Seq(CreateMessageFile.StringFile(ContentTypes.`text/plain(UTF-8)`, message, "message.txt")))
+                )
+              )
             } else {
               requests.singleIgnore(m.textChannel.sendMessage(message))
             }
