@@ -76,7 +76,7 @@ class ChannelMusicController(
   private val killswitchUpdates = cache.subscribeAPI
     .viaMat(KillSwitches.single)(Keep.right)
     .collect {
-      case APIMessage.ChannelDelete(_, _) => Seq(Shutdown)
+      case APIMessage.ChannelDelete(_, _, _) => Seq(Shutdown)
       case APIMessage.VoiceStateUpdate(vs, cs) if vs.userId == slaveUserId && !vs.channelId.contains(vChannelId) =>
         vs.channelId match {
           case Some(newVChannelId) => Seq(VChannelMoved(newVChannelId), SetCacheSnapshot(cs.current))
@@ -560,8 +560,8 @@ object ChannelMusicController {
       slaveUserId: UserId,
       actor: ActorRef[Command]
   ): RunnableGraph[UniqueKillSwitch] = {
-    def validReactionEvent[M <: APIMessage](m: M)(user: M => User, emoji: M => PartialEmoji): Boolean =
-      user(m).id != m.cache.current.botUser.id && EmojiCommand.commandsByUnicode.exists(t => emoji(m).name.contains(t._1))
+    def validReactionEvent[M <: APIMessage](m: M)(user: M => Option[User], emoji: M => PartialEmoji): Boolean =
+      user(m).exists(_.id != m.cache.current.botUser.id) && EmojiCommand.commandsByUnicode.exists(t => emoji(m).name.contains(t._1))
 
     cache.subscribeAPI
       .collect {
@@ -576,10 +576,11 @@ object ChannelMusicController {
           implicit val c: CacheSnapshot = m.cache.current
 
           val res = for {
-            tCh        <- m.channel.asTextGuildChannel
-            guild      <- tCh.guild
+            ch         <- m.channel
+            tCh        <- ch.asTextGuildChannel
+            guild      <- m.guild
             voiceState <- guild.voiceStateFor(slaveUserId)
-            vCh        <- voiceState.voiceChannel.flatMap(_.asVGuildChannel) //TODO: Should be of type VGuildChannel
+            vCh        <- voiceState.voiceChannel
             if VoiceTextStreams.getTextVoiceChannelName(vCh) == tCh.name
           } yield (cmd, m, tCh, vCh)
 

@@ -30,18 +30,26 @@ class VoiceTextStreams[F[_]: Transactor: Mode: Streamable](
 
   private val numberAtEnd = """ ([1-9]+)$""".r.unanchored
 
+  private def isSaveDesctructableChannel(
+      guildId: GuildId,
+      channelId: GuildChannelId
+  )(implicit c: CacheSnapshot) =
+    if (channelId.resolve(guildId).exists(_.name.endsWith("-voice")))
+      guildSettings(guildId).filter(_.vtSettings.saveDestructable)
+    else Source.empty
+
   private def saveDestructableArgs(
-      msg: GuildMessage
+      msg: GuildGatewayMessage
   )(implicit c: CacheSnapshot): Option[(User, TextGuildChannel, Option[GuildCategory])] =
     for {
       channel <- msg.channelId.resolve(msg.guildId)
       if channel.name.endsWith("-voice")
-      category = channel.parentId.flatMap(_.resolve(channel.guildId).flatMap(_.asCategory))
+      category = channel.parentId.flatMap(_.resolve(channel.guildId)).flatMap(_.asCategory)
       user <- msg.authorUserId.flatMap(_.resolve)
     } yield (user, channel, category)
 
   private def saveDesctructableCommon(
-      msg: GuildMessage,
+      msg: GuildGatewayMessage,
       c: CacheSnapshot
   ): Source[(User, TextGuildChannel, Option[GuildCategory], IndexedSeq[Byte]), NotUsed] =
     saveDestructableArgs(msg)(c)
@@ -59,20 +67,22 @@ class VoiceTextStreams[F[_]: Transactor: Mode: Streamable](
   def saveDestructable: Flow[APIMessage, Int, NotUsed] =
     Flow[APIMessage]
       .collect {
-        case APIMessage.MessageCreate(msg: GuildMessage, CacheState(c, _)) =>
+        case APIMessage.MessageCreate(_, msg: GuildGatewayMessage, CacheState(c, _)) =>
           saveDesctructableCommon(msg, c).flatMapConcat {
             case (user, channel, category, key) =>
               Streamable[F].toSource(DBAccess.insertVTMsg[F](msg, channel, category, user, key))
           }
 
-        case APIMessage.MessageUpdate(msg: GuildMessage, CacheState(c, _)) =>
+        case APIMessage.MessageUpdate(_, msg: GuildGatewayMessage, CacheState(c, _)) =>
           saveDesctructableCommon(msg, c).flatMapConcat {
             case (user, channel, category, key) =>
               Streamable[F].toSource(DBAccess.updateVTMsg[F](msg, channel, category, user, key))
           }
 
-        case APIMessage.MessageDelete(msg: GuildMessage, _, CacheState(c, _)) =>
-          saveDesctructableCommon(msg, c).flatMapConcat(_ => Streamable[F].toSource(DBAccess.deleteVTMsg[F](msg)))
+        case APIMessage.MessageDelete(messageId, Some(guild), channelId, CacheState(c, _)) =>
+          isSaveDesctructableChannel(guild.id, channelId.asChannelId[GuildChannel])(c).flatMapConcat { _ =>
+            Streamable[F].toSource(DBAccess.deleteVTMsg[F](messageId))
+          }
       }
       .flatMapMerge(100, identity)
 
@@ -378,10 +388,12 @@ class VoiceTextStreams[F[_]: Transactor: Mode: Streamable](
   ): Source[Request[_], NotUsed] = {
     val s1 = getOrCreateTextChannel(channel, guild, Some(member)).map {
       case Right(tChannel) => applyPerms(member, tChannel, guild, settings.vtSettings.permsJoin)
-      case Left(req) => req
+      case Left(req)       => req
     }
 
-    if (channel.categoryFromGuild(guild).exists(_.voiceChannels(guild).lengthIs <= settings.vtSettings.dynamicallyResizeChannels)) {
+    if (channel
+          .categoryFromGuild(guild)
+          .exists(_.voiceChannels(guild).lengthIs <= settings.vtSettings.dynamicallyResizeChannels)) {
       s1 ++ Source(createNextRoom(channel, guild).toList)
     } else s1
   }
@@ -442,7 +454,8 @@ class VoiceTextStreams[F[_]: Transactor: Mode: Streamable](
 }
 object VoiceTextStreams {
 
-  def canHaveTextChannel(channelId: VoiceGuildChannelId, guild: Guild): Boolean = !guild.afkChannelId.contains(channelId)
+  def canHaveTextChannel(channelId: VoiceGuildChannelId, guild: Guild): Boolean =
+    !guild.afkChannelId.contains(channelId)
 
   def makeTextChannelName(string: String): String = {
     val lowercase  = string.toLowerCase(Locale.ROOT).replace(' ', '-')

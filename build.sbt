@@ -19,8 +19,8 @@ lazy val sharedSettings = Seq(
   addCompilerPlugin("org.typelevel" %% "kind-projector" % "0.11.0" cross CrossVersion.full)
 )
 
-lazy val ackCordVersion    = "0.16.1"
-lazy val akkaVersion       = "2.6.4"
+lazy val ackCordVersion    = "0.17.0-M1"
+lazy val akkaVersion       = "2.6.6"
 lazy val akkaHttpVersion   = "10.1.11"
 lazy val doobieVersion     = "0.9.0"
 lazy val scalacacheVersion = "0.28.0"

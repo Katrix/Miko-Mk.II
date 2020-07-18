@@ -157,8 +157,8 @@ object DBAccess {
           |user_id = ${user.id}, user_name = ${user.username} WHERE message_id = ${msg.id}""".stripMargin.update.run
       .transact(xa)
 
-  def deleteVTMsg[F[_]](msg: Message)(
+  def deleteVTMsg[F[_]](msgId: MessageId)(
       implicit xa: Transactor[F],
       F: Bracket[F, Throwable]
-  ): F[Int] = sql"""DELETE FROM vt_channel_messages WHERE message_id = ${msg.id}""".update.run.transact(xa)
+  ): F[Int] = sql"""DELETE FROM vt_channel_messages WHERE message_id = $msgId""".update.run.transact(xa)
 }

@@ -116,26 +116,12 @@ class MusicCommands(
     musicHandler ! musicCommand(GuildMusicCommand.Gui, m)
   }
 
-  //TODO: Add to AckCord
-  def parseOrElseWith[A, B, C](parse1: MessageParser[A], parse2: MessageParser[B])(
-      combine: Either[A, B] => C
-  ): MessageParser[C] =
-    new MessageParser[C] {
-      override def parse[F[_]](
-          implicit c: CacheSnapshot,
-          F: Monad[F],
-          E: ApplicativeHandle[F, String],
-          S: MonadState[F, List[String]]
-      ): F[C] =
-        E.handleWith(parse1.parse[F].map(a => combine(Left(a))))(_ => parse2.parse[F].map(b => combine(Right(b))))
-    }
-
   val seek: Command[(Option[String], Long)] =
     MusicCommand
       .parsing(
         (
           MessageParser
-            .optional(parseOrElseWith(MessageParser.startsWith("+"), MessageParser.startsWith("-"))(_.merge)),
+            .optional(MessageParser.orElseWith(MessageParser.startsWith("+"), MessageParser.startsWith("-"))(_.merge)),
           MessageParser[Long]
         ).tupled
       )

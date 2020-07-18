@@ -167,7 +167,7 @@ object ChannelMusicHandler {
         VoiceStateUpdate(VoiceStateUpdateData(parameters.guildId, None, selfMute = false, selfDeaf = false))
           .asInstanceOf[GatewayMessage[Any]]
       )
-      .runWith(slaveCache.gatewayPublish)
+      .runWith(slaveCache.sendGatewayPublish)
   }
 
   def running(

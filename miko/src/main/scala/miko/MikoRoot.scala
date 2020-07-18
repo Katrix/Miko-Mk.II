@@ -2,7 +2,7 @@ package miko
 
 import ackcord.cachehandlers.CacheTypeRegistry
 import ackcord.gateway.{GatewayEvent, GatewaySettings}
-import ackcord.commands.CommandConnector
+import ackcord.commands.{CommandConnector, PrefixParser}
 import ackcord.data.VoiceGuildChannel
 import ackcord.requests.{BotAuthentication, Ratelimiter, Requests}
 import ackcord.util.{GuildRouter, Streamable}
@@ -57,7 +57,17 @@ class MikoRoot[F[_]: Transactor: Mode: Streamable: Effect](
     millisecondPrecision = false,
     relativeTime = true
   )
-  implicit val cache: Cache = Cache.create()
+  implicit val cache: Cache = Cache.create(
+    ignoredEvents = Seq(
+      classOf[GatewayEvent.PresenceUpdate],
+      classOf[GatewayEvent.TypingStart],
+      classOf[GatewayEvent.GuildBanAdd],
+      classOf[GatewayEvent.GuildBanRemove],
+      classOf[GatewayEvent.GuildEmojisUpdate],
+      classOf[GatewayEvent.GuildEmojisUpdate]
+    ),
+    cacheTypeRegistry = CacheTypeRegistry.noPresencesBansEmoji
+  )
 
   val cacheStorage: ActorRef[SGFCPool.Msg[CacheStorage.Command, CacheSnapshot]] =
     context.spawn(CacheStorage(cache), "CacheStorage")
@@ -77,16 +87,7 @@ class MikoRoot[F[_]: Transactor: Mode: Streamable: Effect](
     DiscordShard(
       wsUri,
       GatewaySettings(config.token),
-      cache,
-      Seq(
-        classOf[GatewayEvent.PresenceUpdate],
-        classOf[GatewayEvent.TypingStart],
-        classOf[GatewayEvent.GuildBanAdd],
-        classOf[GatewayEvent.GuildBanRemove],
-        classOf[GatewayEvent.GuildEmojisUpdate],
-        classOf[GatewayEvent.GuildEmojisUpdate]
-      ),
-      CacheTypeRegistry.noPresencesBansEmoji
+      cache
     ),
     "DiscordShard"
   )
@@ -193,11 +194,12 @@ class MikoRoot[F[_]: Transactor: Mode: Streamable: Effect](
   private def registerCommands(vtStreams: VoiceTextStreams[F]): Unit = {
     val connector = new CommandConnector(
       cache.subscribeAPI.collectType[APIMessage.MessageCreate].map(m => m.message -> m.cache.current),
-      requests
+      requests,
+      requests.parallelism
     )
 
-    def mainPrefix(aliases: String*)  = connector.prefix("!", aliases, mustMention = true)
-    def musicPrefix(aliases: String*) = connector.prefix("&", aliases, mustMention = true)
+    def mainPrefix(aliases: String*)  = PrefixParser.structured(needsMention = true, Seq("!"), aliases)
+    def musicPrefix(aliases: String*) = PrefixParser.structured(needsMention = true, Seq("&"), aliases)
 
     val genericCommands = new GenericCommands(vtStreams)
     //connector.runNewCommand(mainPrefix("help"), genericCommands.help)
@@ -250,7 +252,7 @@ class MikoRoot[F[_]: Transactor: Mode: Streamable: Effect](
 
     cache.subscribeAPI
       .collect {
-        case APIMessage.ChannelUpdate(vChannel: VoiceGuildChannel, CacheState(current, previous)) =>
+        case APIMessage.ChannelUpdate(_, vChannel: VoiceGuildChannel, CacheState(current, previous)) =>
           (vChannel, current, previous)
       }
       .to(vtStreams.channelUpdate)

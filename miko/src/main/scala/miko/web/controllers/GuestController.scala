@@ -115,12 +115,13 @@ class GuestController(
         ChannelId(i).asChannelId[TextChannel] -> SnowflakeMap.from(scala.Range(0, 100).map {
           j =>
           val userId = members.keys.toSeq(Random.nextInt(members.size))
-            MessageId(j) -> GuildMessage(
+            MessageId(j) -> GuildGatewayMessage(
               id = MessageId(j),
               channelId = TextGuildChannelId(i),
               guildId = guildId,
               authorId = RawSnowflake(userId),
-              member = members(userId),
+              member = Some(members(userId)),
+              authorUsername = users(userId).username,
               isAuthorUser = true,
               content = Random.alphanumeric.take(Random.nextInt(16)).mkString,
               timestamp = OffsetDateTime.now(),
@@ -257,7 +258,7 @@ class GuestController(
         userMap = users,
         banMap = SnowflakeMap.empty,
         seq = 0,
-        creationProcessor = MemoryCacheSnapshot.defaultCacheProcessor
+        processor = MemoryCacheSnapshot.defaultCacheProcessor
       )
     )
   }
