@@ -1,0 +1,10 @@
+@import "tristate";
+@import "music-player";
+@import "basic";
+
+$primary: rgb(111, 66, 193);
+$enable-responsive-font-sizes: true;
+
+@import "~bootstrap/scss/bootstrap";
+@import "~bootstrap-vue/src/index";
+@import "aside-menu";

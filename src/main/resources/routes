@@ -1,0 +1,19 @@
+GET         /                                    miko.web.controllers.WebController.index
+GET         /codegrant                           miko.web.controllers.WebController.codeGrant
+GET         /authenticate                        miko.web.controllers.WebController.authenticateOAuth(code: Option[String], state: Option[String])
+GET         /logout                              miko.web.controllers.WebController.logout
+
+GET         /guilds                              miko.web.controllers.WebController.index
+GET         /guilds/:guild/                      miko.web.controllers.WebController.guildIndex(guild)
+GET         /guilds/:guild/help                  miko.web.controllers.WebController.guildIndex(guild)
+GET         /guilds/:guild/music                 miko.web.controllers.WebController.guildIndex(guild)
+GET         /guilds/:guild/settings              miko.web.controllers.WebController.guildIndex(guild)
+GET         /guilds/:guild/logs                  miko.web.controllers.WebController.guildIndex(guild)
+
+GET         /api/guilds                          miko.web.controllers.WebController.getAvailibleGuils
+GET         /api/guild/:guild/info               miko.web.controllers.WebController.getGuildData(guild)
+GET         /api/guild/:guild/settings           miko.web.controllers.WebController.getSettings(guild)
+POST        /api/guild/:guild/settings           miko.web.controllers.WebController.updateSettings(guild)
+GET         /api/guild/:guild/commands           miko.web.controllers.WebController.getCommandData(guild)
+
+GET         /assets/*file                        controllers.Assets.versioned(path="/public", file)

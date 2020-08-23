@@ -1,5 +1,5 @@
-addSbtPlugin("org.portable-scala" % "sbt-scalajs-crossproject" % "0.6.0")
-addSbtPlugin("org.scala-js"       % "sbt-scalajs"              % "0.6.32")
-addSbtPlugin("com.vmunier"        % "sbt-web-scalajs"          % "1.0.7")
-addSbtPlugin("org.irundaia.sbt"   % "sbt-sassify"              % "1.4.12")
-addSbtPlugin("com.typesafe.play"  % "sbt-plugin"               % "2.8.1")
+addSbtPlugin("com.typesafe.play" % "sbt-plugin" % "2.8.1")
+addSbtPlugin("com.typesafe.sbt"  % "sbt-digest" % "1.1.4")
+addSbtPlugin("com.typesafe.sbt"  % "sbt-gzip"   % "1.0.2")
+
+libraryDependencies += "com.typesafe.play" %% "play-json" % "2.8.1"
