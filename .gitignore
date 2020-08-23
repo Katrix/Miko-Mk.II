@@ -31,6 +31,7 @@ project/target
 .DS_Store
 
 /node_modules/
+dist
 
 #Miko
 miko/src/main/resources/application.conf
