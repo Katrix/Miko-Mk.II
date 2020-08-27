@@ -338,12 +338,21 @@ class GenericCommands(vtStreams: VoiceTextStreams, devContext: Option[DevContext
             toolbox
               .eval(toolbox.parse(surroundingCode))
               .asInstanceOf[UserCommandMessage[MessageParser.RemainingAsString] => Any](m)
-          )
+          ).plainText
         } catch {
           case NonFatal(e) => e.getMessage
         }
 
-        m.textChannel.sendMessage(s"```$str```")
+        if (str.length > 2000) {
+          CreateMessage(
+            m.textChannel.id,
+            CreateMessageData(
+              files = Seq(CreateMessageFile.StringFile(ContentTypes.`text/plain(UTF-8)`, str, "message.txt"))
+            )
+          )
+        } else {
+          m.textChannel.sendMessage(s"```$str```")
+        }
       }
 
   private val codeRegex = Pattern.compile("""```scala\R(.+)\R```$""", Pattern.DOTALL)
