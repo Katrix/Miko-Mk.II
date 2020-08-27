@@ -307,11 +307,10 @@ class GenericCommands(vtStreams: VoiceTextStreams, devContext: Option[DevContext
         }
       }
 
-  import scala.reflect.runtime.universe._
   import scala.tools.reflect.ToolBox
 
-  private val mirror  = runtimeMirror(this.getClass.getClassLoader)
-  private val toolbox = mirror.mkToolBox()
+  private lazy val mirror  = scala.reflect.runtime.universe.runtimeMirror(this.getClass.getClassLoader)
+  private lazy val toolbox = mirror.mkToolBox()
 
   val eval: NamedDescribedCommand[MessageParser.RemainingAsString] =
     BotOwnerCommand
@@ -346,22 +345,6 @@ class GenericCommands(vtStreams: VoiceTextStreams, devContext: Option[DevContext
 
         m.textChannel.sendMessage(s"```$str```")
       }
-
-  private val quotedRegex = """(?:"((?:[^"\\]|\\.)+)")|((?:\S)+)""".r
-
-  private def stringToArgsQuoted(arguments: String): List[String] = {
-    if (arguments.isEmpty) Nil
-    else {
-      quotedRegex
-        .findAllMatchIn(arguments)
-        .map { m =>
-          val quoted = m.group(1) != null
-          val group  = if (quoted) 1 else 2
-          m.group(group)
-        }
-        .toList
-    }
-  }
 
   private val codeRegex = Pattern.compile("""```scala\R(.+)\R```$""", Pattern.DOTALL)
 
@@ -431,7 +414,8 @@ class GenericCommands(vtStreams: VoiceTextStreams, devContext: Option[DevContext
                   commandConnector,
                   helpCommand,
                   components
-                ).toString
+                )
+                .toString
             } catch {
               case NonFatal(e) =>
                 e.getMessage
