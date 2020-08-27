@@ -310,6 +310,7 @@ export default {
     settings: {
       immediate: true,
       handler(val) {
+        //TODO: Updating stuff here breaks stuff
         this.$set(this, 'newSettings', val)
       },
     },

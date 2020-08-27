@@ -169,7 +169,7 @@ class MikoComponents(context: ApplicationLoader.Context)
   }
 
   implicit lazy val mikoComponents: MikoControllerComponents =
-    MikoControllerComponents(cacheStorage, requests, memberCache, httpErrorHandler, zioRuntime, implicitly)
+    MikoControllerComponents(cacheStorage, requests, memberCache, httpErrorHandler, zioRuntime, controllerComponents)
 
   lazy val webController = new WebController(assetsFinder, helpCommand)
 
@@ -178,7 +178,7 @@ class MikoComponents(context: ApplicationLoader.Context)
     Await.result(mikoRoot.ask[MikoHelpCommand](MikoRoot.GetHelpCommands)(timeout, scheduler), 1.minutes)
   }
 
-  val mikoRoot: ActorRef[MikoRoot.Command] = typedSystem.systemActorOf(MikoRoot(shutdown), "MikoRoot")
+  val mikoRoot: ActorRef[MikoRoot.Command] = typedSystem.systemActorOf(MikoRoot(shutdown, devContext), "MikoRoot")
 
   //Runs evolutions
   locally {

@@ -3,11 +3,11 @@
     <div v-for="(permissions, idx) in permissionChunks" :key="`permChunk-${idx}`" class="col-md-4 form">
       <tristate
         v-for="permission in permissions"
-        :key="`permission-${permission.modelKey}`"
-        :value="permissionData[permission.modelKey]"
+        :key="`permission-${permission.apiName}`"
+        :value="permissionData[permission.apiName]"
         :display-name="permission.text"
-        :name="`vtPermission-${tristateContextName}-${permission.modelKey}`"
-        @input="permissionData = { ...permissionData, [permission.modelKey]: $event }"
+        :name="`vtPermission-${tristateContextName}-${permission.apiName}`"
+        @input="permissionData = { ...permissionData, [permission.apiName]: $event }"
       />
     </div>
   </div>
@@ -19,20 +19,20 @@ import chunk from 'lodash/chunk'
 import Tristate from './Tristate'
 
 const allPermissions = [
-  { text: 'Create instant invite', modelKey: 'createInstantInvite' },
-  { text: 'Manage channel', modelKey: 'manageChannel' },
-  { text: 'Add reactions', modelKey: 'addReactions' },
-  { text: 'Read messages', modelKey: 'readMessages' },
-  { text: 'Send messages', modelKey: 'sendMessages' },
-  { text: 'Send TTS messages', modelKey: 'sendTTSMessages' },
-  { text: 'Manage messages', modelKey: 'manageMessages' },
-  { text: 'Embed links', modelKey: 'embedLinks' },
-  { text: 'Attach files', modelKey: 'attachFiles' },
-  { text: 'Read message history', modelKey: 'readMessageHistory' },
-  { text: 'Mention everyone', modelKey: 'mentionEveryone' },
-  { text: 'Use external emoji', modelKey: 'useExternalEmoji' },
-  { text: 'Manage roles', modelKey: 'manageRoles' },
-  { text: 'Manage webhooks', modelKey: 'manageWebhooks' },
+  { text: 'Create instant invite', apiName: 'create_instant_invite' },
+  { text: 'Manage channel', apiName: 'manage_channels' },
+  { text: 'Add reactions', apiName: 'add_reactions' },
+  { text: 'Read messages', apiName: 'view_channel' },
+  { text: 'Send messages', apiName: 'send_messages' },
+  { text: 'Send TTS messages', apiName: 'send_tts_messages' },
+  { text: 'Manage messages', apiName: 'manage_messages' },
+  { text: 'Embed links', apiName: 'embed_links' },
+  { text: 'Attach files', apiName: 'attach_files' },
+  { text: 'Read message history', apiName: 'read_message_history' },
+  { text: 'Mention everyone', apiName: 'mention_everyone' },
+  { text: 'Use external emoji', apiName: 'use_external_emojis' },
+  { text: 'Manage roles', apiName: 'manage_roles' },
+  { text: 'Manage webhooks', apiName: 'manage_webhooks' },
 ]
 
 export default {
@@ -72,8 +72,8 @@ export default {
     arrayToObjectVtPermValue(arrays) {
       return Object.fromEntries(
         allPermissions.map((p) => [
-          p.modelKey,
-          arrays.allow.includes(p.modelKey) ? true : arrays.deny.includes(p.modelKey) ? false : null,
+          p.apiName,
+          arrays.allow.includes(p.apiName) ? true : arrays.deny.includes(p.apiName) ? false : null,
         ])
       )
     },

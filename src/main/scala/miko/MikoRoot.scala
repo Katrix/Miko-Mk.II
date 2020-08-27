@@ -30,6 +30,8 @@ import miko.util.SGFCPool
 import miko.voicetext.VoiceTextStreams
 import miko.web.WebEvents
 import org.slf4j.Logger
+import play.api.ApplicationLoader.DevContext
+import play.core.WebCommands
 import zio.blocking.Blocking
 import zio.{RIO, Task, ZEnv}
 
@@ -39,7 +41,8 @@ import scala.util.control.NonFatal
 
 class MikoRoot(
     ctx: ActorContext[MikoRoot.Command],
-    shutdown: CoordinatedShutdown
+    shutdown: CoordinatedShutdown,
+    devContext: Option[DevContext]
 )(
     implicit
     webEvents: WebEvents,
@@ -101,6 +104,12 @@ class MikoRoot(
     context.spawn(SlaveHandler(cache, wsUri), "SlaveHandler")
   val topMusicHandler: ActorRef[GuildRouter.Command[Nothing, GuildMusicHandler.Command]] =
     initializeMusic()
+
+  val commandConnector = new CommandConnector(
+    cache.subscribeAPI.collectType[APIMessage.MessageCreate].map(m => m.message -> m.cache.current),
+    requests,
+    requests.parallelism
+  )
 
   val helpCommand = new MikoHelpCommand(requests)
 
@@ -197,17 +206,11 @@ class MikoRoot(
   }
 
   private def registerCommands(vtStreams: VoiceTextStreams): Unit = {
-    val connector = new CommandConnector(
-      cache.subscribeAPI.collectType[APIMessage.MessageCreate].map(m => m.message -> m.cache.current),
-      requests,
-      requests.parallelism
-    )
-
-    val genericCommands = new GenericCommands(vtStreams)
+    val genericCommands = new GenericCommands(vtStreams, devContext)
     val imageCommands   = new ImageCommands(imageCache)
     val musicCommands   = new MusicCommands(topMusicHandler)
 
-    connector.bulkRunNamedWithHelp(
+    commandConnector.bulkRunNamedWithHelp(
       helpCommand,
       helpCommand.command
         .toNamed(genericCommands.namedCustomPerm(Seq("help"), CommandCategory.General, CommandPermission.Allow))
@@ -218,6 +221,9 @@ class MikoRoot(
       genericCommands.genKeys,
       genericCommands.info,
       genericCommands.debug,
+      genericCommands.eval,
+      genericCommands.execute(commandConnector, helpCommand),
+      genericCommands.reload,
       imageCommands.safebooru,
       musicCommands.pause,
       musicCommands.volume,
@@ -272,7 +278,7 @@ class MikoRoot(
 }
 object MikoRoot {
 
-  def apply(shutdown: CoordinatedShutdown)(
+  def apply(shutdown: CoordinatedShutdown, devContext: Option[DevContext])(
       implicit
       webEvents: WebEvents,
       settings: SettingsAccess,
@@ -281,7 +287,7 @@ object MikoRoot {
       blockingStreamable: Streamable[RIO[Blocking, *]],
       runtime: zio.Runtime[ZEnv]
   ): Behavior[Command] =
-    Behaviors.setup(ctx => new MikoRoot(ctx, shutdown))
+    Behaviors.setup(ctx => new MikoRoot(ctx, shutdown, devContext))
 
   sealed trait Command
   private case class PartTerminated(ref: ActorRef[_], replyTo: ActorRef[Done]) extends Command
