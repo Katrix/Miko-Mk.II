@@ -63,7 +63,6 @@ lazy val miko = project
     libraryDependencies += "com.vmunier"      %% "scalajs-scripts" % "1.1.4",
     libraryDependencies += "com.lihaoyi"      %% "scalatags"       % "0.9.0",
     libraryDependencies += "com.lihaoyi"      %% "pprint"          % "0.5.9",
-    libraryDependencies += "com.lihaoyi"      %% "pprint"          % "0.5.9",
     libraryDependencies += "org.scala-lang"   % "scala-compiler"   % scalaVersion.value,
     WebKeys.packagePrefix in Assets := "public/",
     managedClasspath in Runtime += (packageBin in Assets).value,

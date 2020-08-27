@@ -34,5 +34,5 @@ project/target
 dist
 
 #Miko
-miko/src/main/resources/application.conf
+src/main/resources/application.conf
 offlineCache.json
