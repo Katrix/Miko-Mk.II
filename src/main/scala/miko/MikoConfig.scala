@@ -7,9 +7,9 @@ import com.typesafe.config.Config
 import scala.jdk.CollectionConverters._
 
 class MikoConfig(val config: Config) {
-  lazy val token: String        = config.getString("miko.token")
-  lazy val clientId: String     = config.getString("miko.client-id")
-  lazy val clientSecret: String = config.getString("miko.client-secret")
+  lazy val token: String         = config.getString("miko.token")
+  lazy val clientId: String      = config.getString("miko.client-id")
+  lazy val clientSecret: String  = config.getString("miko.client-secret")
   lazy val botOwners: Seq[UserId] =
     config.getStringList("miko.bot-owners").asScala.toSeq.map((RawSnowflake(_: String)).andThen(UserId.apply))
 

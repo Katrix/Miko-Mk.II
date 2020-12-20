@@ -19,7 +19,7 @@ lazy val sharedSettings = Seq(
   addCompilerPlugin("org.typelevel" %% "kind-projector" % "0.11.0" cross CrossVersion.full)
 )
 
-lazy val ackCordVersion    = "0.17.0"
+lazy val ackCordVersion    = "0.18.0-SNAPSHOT"
 lazy val akkaVersion       = "2.6.6"
 lazy val akkaHttpVersion   = "10.1.11"
 lazy val doobieVersion     = "0.9.0"
@@ -37,8 +37,10 @@ lazy val miko = project
     libraryDependencies ++= Seq(
       "net.katsstuff" %% "ackcord-core"            % ackCordVersion,
       "net.katsstuff" %% "ackcord-commands"        % ackCordVersion,
+      "net.katsstuff" %% "ackcord-commands"        % ackCordVersion,
+      "net.katsstuff" %% "ackcord-slash-commands"  % ackCordVersion,
       "net.katsstuff" %% "ackcord-lavaplayer-core" % ackCordVersion,
-      "com.sedmelluq" % "lavaplayer"               % "1.3.50"
+      "com.sedmelluq" % "lavaplayer"               % "1.3.65"
     ),
     libraryDependencies ++= Seq(evolutions, jdbc),
     libraryDependencies ++= Seq(

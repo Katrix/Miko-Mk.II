@@ -1,49 +1,46 @@
 package miko.music
 
-import ackcord.commands.{VoiceGuildMemberCommandMessage, _}
+import ackcord.slashcommands._
 import ackcord.syntax._
 import ackcord.util.GuildRouter
 import akka.NotUsed
 import akka.actor.typed.ActorRef
-import akka.stream.scaladsl.Flow
-import cats.syntax.all._
-import miko.commands.{CommandCategory, MikoCommandComponents, MikoCommandController}
+import cats.Id
+import miko.commands.{MikoCommandComponents, MikoSlashCommandController}
 
 class MusicCommands(musicHandler: ActorRef[GuildRouter.Command[Nothing, GuildMusicHandler.Command]])(
     implicit components: MikoCommandComponents
-) extends MikoCommandController(components) {
+) extends MikoSlashCommandController(components) {
 
-  val inVoiceChannelWithBot: CommandFunction[VoiceGuildMemberCommandMessage, VoiceGuildMemberCommandMessage] =
-    new CommandFunction[VoiceGuildMemberCommandMessage, VoiceGuildMemberCommandMessage] {
-      override def flow[A]: Flow[VoiceGuildMemberCommandMessage[A], Either[
-        Option[CommandError],
-        VoiceGuildMemberCommandMessage[A]
-      ], NotUsed] = {
-        Flow[VoiceGuildMemberCommandMessage[A]].map { implicit m =>
-          val botUser       = m.cache.botUser
-          val botVChannelId = m.guild.voiceStateFor(botUser.id).flatMap(_.channelId)
+  val inVoiceChannelWithBot: CommandTransformer[VoiceChannelCommandInteraction, VoiceChannelCommandInteraction] =
+    new CommandTransformer[VoiceChannelCommandInteraction, VoiceChannelCommandInteraction] {
+      override def filter[A](
+          from: VoiceChannelCommandInteraction[A]
+      ): Either[Option[String], VoiceChannelCommandInteraction[A]] = {
+        val botUser       = from.cache.botUser
+        val botVChannelId = from.guild.voiceStateFor(botUser.id).flatMap(_.channelId)
 
-          val botIsInVChannel     = botVChannelId.isDefined
-          val isBotInSameVChannel = botVChannelId.contains(m.voiceChannel.id)
+        val botIsInVChannel = botVChannelId.isDefined
+        //noinspection ComparingUnrelatedTypes
+        val isBotInSameVChannel = botVChannelId.contains(from.voiceChannel.id)
 
-          if (isBotInSameVChannel) Right(m)
-          else if (botIsInVChannel) Left(Some(CommandError.mk[A]("You are in a different voice channel", m)))
-          else Left(Some(CommandError.mk[A]("No music is playing", m)))
-        }
+        if (isBotInSameVChannel) Right(from)
+        else if (botIsInVChannel) Left(Some("You are in a different voice channel"))
+        else Left(Some("No music is playing"))
       }
     }
 
   import GuildMusicHandler.{MusicCommand => GuildMusicCommand}
 
-  val MusicCommand: CommandBuilder[VoiceGuildMemberCommandMessage, NotUsed] =
+  val MusicCommand: CommandBuilder[VoiceChannelCommandInteraction, NotUsed] =
     GuildVoiceCommand.andThen(inVoiceChannelWithBot)
 
-  def cmdInfo(m: VoiceGuildMemberCommandMessage[_]): GuildMusicHandler.MusicCmdInfo =
+  def cmdInfo(m: VoiceChannelCommandInteraction[_]): GuildMusicHandler.MusicCmdInfo =
     GuildMusicHandler.MusicCmdInfo(Some(m.textChannel), m.voiceChannel.id, Some(m.cache))
 
   def musicCommand(
       command: GuildMusicCommand,
-      m: VoiceGuildMemberCommandMessage[_]
+      m: VoiceChannelCommandInteraction[_]
   ): GuildRouter.SendToGuildActor[GuildMusicHandler.GuildMusicCommandWrapper] =
     GuildRouter.SendToGuildActor(
       m.guild.id,
@@ -53,177 +50,155 @@ class MusicCommands(musicHandler: ActorRef[GuildRouter.Command[Nothing, GuildMus
       )
     )
 
-  val pause: NamedDescribedCommand[NotUsed] =
-    MusicCommand
-      .namedParser(named(Seq("pause", "p"), CommandCategory.Music, _.music.pause))
-      .described("Pause", "Pause the music playing", extra = CommandCategory.Music.extra)
-      .withSideEffects { implicit m =>
-        musicHandler ! musicCommand(GuildMusicCommand.Pause, m)
-      }
-
-  val volume: NamedDescribedCommand[Int] =
-    MusicCommand
-      .namedParser(named(Seq("volume", "vol"), CommandCategory.Music, _.music.volume))
-      .described("Volume", "Set the volume music is played at", "<volume>", extra = CommandCategory.Music.extra)
-      .parsing[Int]
-      .withSideEffects { implicit m =>
-        musicHandler ! musicCommand(GuildMusicCommand.Volume(m.parsed), m)
-      }
-
-  val defVolume: NamedDescribedCommand[Int] =
-    GuildCommand
-      .namedParser(named(Seq("defaultVolume", "defvol"), CommandCategory.Music, _.music.defVolume))
-      .described(
-        "Default Volume",
-        "Set the volume music is played at when the bot first joins the channel",
-        "<volume>",
-        extra = CommandCategory.Music.extra
-      )
-      .parsing[Int]
-      .withSideEffects { implicit m =>
-        musicHandler ! GuildRouter
-          .SendToGuildActor(
-            m.guild.id,
-            GuildMusicHandler.SetDefaultVolume(m.parsed, Some(m.textChannel), Some(m.cache))
-          )
-      }
-
-  val stop: NamedDescribedCommand[NotUsed] =
-    MusicCommand
-      .namedParser(named(Seq("stop", "s"), CommandCategory.Music, _.music.stop))
-      .described("Stop", "Stops the music completely", extra = CommandCategory.Music.extra)
-      .withSideEffects { implicit m =>
-        musicHandler ! musicCommand(GuildMusicCommand.Stop, m)
-      }
-
-  val nowPlaying: NamedDescribedCommand[NotUsed] = MusicCommand
-    .namedParser(named(Seq("nowPlaying", "np"), CommandCategory.Music, _.music.nowPlaying))
-    .described("Now playing", "Checks what track is currently playing", extra = CommandCategory.Music.extra)
-    .withSideEffects { implicit m =>
-      musicHandler ! musicCommand(GuildMusicCommand.NowPlaying, m)
+  private val pause: Command[VoiceChannelCommandInteraction, NotUsed] =
+    MusicCommand.command("pPause", "Pause the music playing") { implicit m =>
+      musicHandler ! musicCommand(GuildMusicCommand.Pause, m)
+      acknowledge()
     }
 
-  val queue: NamedDescribedCommand[String] =
+  private val volume: Command[VoiceChannelCommandInteraction, Id[Int]] =
+    MusicCommand
+      .named("Volume", "Set the volume music is played at")
+      .withParams(int("Volume", "The new volume"))
+      .handle { implicit m =>
+        musicHandler ! musicCommand(GuildMusicCommand.Volume(m.args), m)
+        acknowledge()
+      }
+
+  private val defVolume: Command[GuildCommandInteraction, Id[Int]] =
+    GuildCommand
+      .named("defVol", "Set the volume music is played at when the bot first joins the channel")
+      .withParams(int("Volume", "The new default volume"))
+      .handle { implicit m =>
+        musicHandler ! GuildRouter.SendToGuildActor(
+          m.guild.id,
+          GuildMusicHandler.SetDefaultVolume(m.args, Some(m.textChannel), Some(m.cache))
+        )
+        acknowledge()
+      }
+
+  private val stop: Command[VoiceChannelCommandInteraction, NotUsed] =
+    MusicCommand.command("Stop", "Stops the music completely") { implicit m =>
+      musicHandler ! musicCommand(GuildMusicCommand.Stop, m)
+      acknowledge()
+    }
+
+  private val nowPlaying: Command[VoiceChannelCommandInteraction, NotUsed] =
+    MusicCommand.command("nowPlaying", "Checks what track is currently playing") { implicit m =>
+      musicHandler ! musicCommand(GuildMusicCommand.NowPlaying, m)
+      acknowledge()
+    }
+
+  private val queueUrl: Command[VoiceChannelCommandInteraction, Id[String]] =
     GuildVoiceCommand
-      .namedParser(named(Seq("queue", "q"), CommandCategory.Music, _.music.queue))
-      .described(
-        "Queue",
-        "Adds a new track to the playlist of tracks to play",
-        "<url to add>",
-        extra = CommandCategory.Music.extra
-      )
-      .parsing[String]
-      .withSideEffects { implicit m =>
-        musicHandler ! musicCommand(GuildMusicCommand.Queue(m.parsed), m)
+      .named("url", "Adds a new track to the playlist of tracks to play by an url")
+      .withParams(string("url", "The url to add"))
+      .handle { implicit m =>
+        musicHandler ! musicCommand(GuildMusicCommand.Queue(m.args), m)
+        acknowledge()
       }
 
-  val next: NamedDescribedCommand[NotUsed] =
-    MusicCommand
-      .namedParser(named(Seq("next", "n"), CommandCategory.Music, _.music.next))
-      .described("Next", "Skips to the next track", extra = CommandCategory.Music.extra)
-      .withSideEffects { implicit m =>
-        musicHandler ! musicCommand(GuildMusicCommand.Next, m)
-      }
-
-  val prev: NamedDescribedCommand[NotUsed] =
-    MusicCommand
-      .namedParser(named(Seq("prev", "p"), CommandCategory.Music, _.music.prev))
-      .described("Prev", "Plays the previous track", extra = CommandCategory.Music.extra)
-      .withSideEffects { implicit m =>
-        musicHandler ! musicCommand(GuildMusicCommand.Prev, m)
-      }
-
-  val clear: NamedDescribedCommand[NotUsed] =
-    MusicCommand
-      .namedParser(named(Seq("clear"), CommandCategory.Music, _.music.clear))
-      .described(
-        "Clear",
-        "Clears the current playlist, while keeping the bot in the room",
-        extra = CommandCategory.Music.extra
-      )
-      .withSideEffects { implicit m =>
-        musicHandler ! musicCommand(GuildMusicCommand.Clear, m)
-      }
-
-  val shuffle: NamedDescribedCommand[NotUsed] =
-    MusicCommand
-      .namedParser(named(Seq("shuffle"), CommandCategory.Music, _.music.shuffle))
-      .described("Shuffle", "Shuffles the playlist", extra = CommandCategory.Music.extra)
-      .withSideEffects { implicit m =>
-        musicHandler ! musicCommand(GuildMusicCommand.Shuffle, m)
-      }
-
-  val ytQueue: NamedDescribedCommand[MessageParser.RemainingAsString] =
+  private val ytQueue: Command[VoiceChannelCommandInteraction, Id[String]] =
     GuildVoiceCommand
-      .namedParser(named(Seq("youtubeQueue", "ytQueue", "ytq"), CommandCategory.Music, _.music.ytQueue))
-      .described(
-        "Youtube queue",
-        "Queues the first result from searching for the topic on youtube",
-        "<search...>",
-        extra = CommandCategory.Music.extra
+      .named(
+        "youtube",
+        "Queues the first result from searching for the topic on youtube"
       )
-      .parsing[MessageParser.RemainingAsString]
-      .withSideEffects { implicit m =>
-        musicHandler ! musicCommand(GuildMusicCommand.Queue(s"ytsearch:${m.parsed.remaining}"), m)
+      .withParams(string("Search", "What to search for"))
+      .handle { implicit m =>
+        musicHandler ! musicCommand(GuildMusicCommand.Queue(s"ytsearch:${m.args}"), m)
+        acknowledge()
       }
 
-  val scQueue: NamedDescribedCommand[MessageParser.RemainingAsString] =
+  private val scQueue: Command[VoiceChannelCommandInteraction, Id[String]] =
     GuildVoiceCommand
-      .namedParser(named(Seq("soundcloudQueue", "scQueue", "scq"), CommandCategory.Music, _.music.scQueue))
-      .described(
-        "Soundcloud queue",
-        "Queues the first result from searching for the topic on Soundcloud",
-        "<search...>",
-        extra = CommandCategory.Music.extra
+      .named(
+        "soundcloud",
+        "Queues the first result from searching for the topic on Soundcloud"
       )
-      .parsing[MessageParser.RemainingAsString]
-      .withSideEffects { implicit m =>
-        musicHandler ! musicCommand(GuildMusicCommand.Queue(s"scsearch:${m.parsed.remaining}"), m)
+      .withParams(string("Search", "What to search for"))
+      .handle { implicit m =>
+        musicHandler ! musicCommand(GuildMusicCommand.Queue(s"scsearch:${m.args}"), m)
+        acknowledge()
       }
 
-  val gui: NamedDescribedCommand[NotUsed] =
-    MusicCommand
-      .namedParser(named(Seq("gui"), CommandCategory.Music, _.music.gui))
-      .described("GUI", "Brings up the button gui", extra = CommandCategory.Music.extra)
-      .withSideEffects { implicit m =>
-        musicHandler ! musicCommand(GuildMusicCommand.Gui, m)
-      }
+  private val next: Command[VoiceChannelCommandInteraction, NotUsed] =
+    MusicCommand.command("next", "Skips to the next track") { implicit m =>
+      musicHandler ! musicCommand(GuildMusicCommand.Next, m)
+      acknowledge()
+    }
 
-  val seek: NamedDescribedCommand[(Option[String], Long)] =
+  private val prev: Command[VoiceChannelCommandInteraction, NotUsed] =
+    MusicCommand.command("prev", "Plays the previous track") { implicit m =>
+      musicHandler ! musicCommand(GuildMusicCommand.Prev, m)
+      acknowledge()
+    }
+
+  private val clear: Command[VoiceChannelCommandInteraction, NotUsed] =
+    MusicCommand.command("clear", "Clears the current playlist, while keeping the bot in the room") { implicit m =>
+      musicHandler ! musicCommand(GuildMusicCommand.Clear, m)
+      acknowledge()
+    }
+
+  private val shuffle: Command[VoiceChannelCommandInteraction, NotUsed] =
+    MusicCommand.command("shuffle", "Shuffles the playlist") { implicit m =>
+      musicHandler ! musicCommand(GuildMusicCommand.Shuffle, m)
+      acknowledge()
+    }
+
+  private val gui: Command[VoiceChannelCommandInteraction, NotUsed] =
+    MusicCommand.command("gui", "Brings up the button gui") { implicit m =>
+      musicHandler ! musicCommand(GuildMusicCommand.Gui, m)
+      acknowledge()
+    }
+
+  private val seek: Command[VoiceChannelCommandInteraction, (Id[Int], Option[String])] =
     MusicCommand
-      .namedParser(named(Seq("seek"), CommandCategory.Music, _.music.seek))
-      .described("Seek", "Seeks to a duration in the track", "[+|-]<duration>", extra = CommandCategory.Music.extra)
-      .parsing(
-        (
-          MessageParser
-            .optional(MessageParser.orElseWith(MessageParser.startsWith("+"), MessageParser.startsWith("-"))(_.merge)),
-          MessageParser[Long]
-        ).tupled
+      .named("seek", "Seeks to a duration in the track")
+      .withParams(
+        int("duration", "The amount to seek") ~
+          string("offset", "Offset the location from the current one").notRequired
+            .withChoices(Map("+" -> "Offset positive", "-" -> "Offset negative"))
       )
-      .withSideEffects { m =>
-        val (position, offset) = m.parsed match {
-          case (Some("-"), dur) => (dur * -1, true)
-          case (Some("+"), dur) => (dur, true)
-          case (None, dur)      => (dur, false)
-          case (_, dur)         => (dur, false)
+      .handle { m =>
+        val (position, offset) = m.args match {
+          case (dur, Some("-")) => (dur * -1, true)
+          case (dur, Some("+")) => (dur, true)
+          case (dur, None)      => (dur, false)
+          case (dur, _)         => (dur, false)
         }
 
         musicHandler ! musicCommand(GuildMusicCommand.Seek(position, offset), m)
+        acknowledge()
       }
 
-  val progress: NamedDescribedCommand[NotUsed] =
-    MusicCommand
-      .namedParser(named(Seq("progress"), CommandCategory.Music, _.music.progress))
-      .described("Progress", "Views the current progress of the track", extra = CommandCategory.Music.extra)
-      .withSideEffects { implicit m =>
-        musicHandler ! musicCommand(GuildMusicCommand.Progress, m)
-      }
+  private val loop: Command[VoiceChannelCommandInteraction, NotUsed] =
+    MusicCommand.command("loop", "Toggles looping mode on and off") { implicit m =>
+      musicHandler ! musicCommand(GuildMusicCommand.ToggleLoop, m)
+      acknowledge()
+    }
 
-  val loop: NamedDescribedCommand[NotUsed] =
-    MusicCommand
-      .namedParser(named(Seq("loop"), CommandCategory.Music, _.music.loop))
-      .described("Loop", "Toggles looping mode on and off", extra = CommandCategory.Music.extra)
-      .withSideEffects { implicit m =>
-        musicHandler ! musicCommand(GuildMusicCommand.ToggleLoop, m)
-      }
+  val musicCommand: CommandGroup = Command.group("music", "Music commands")(
+    pause,
+    volume,
+    defVolume,
+    stop,
+    nowPlaying,
+    Command.group("queue", "Queue a track")(
+      queueUrl,
+      ytQueue,
+      scQueue
+    ),
+    Command.group("navigate", "Navigate around the track")(
+      next,
+      prev,
+      seek
+    ),
+    Command.group("sub", "More commands which need to be nested")(
+      shuffle,
+      gui,
+      loop,
+      clear
+    )
+  )
 }

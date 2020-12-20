@@ -1,6 +1,6 @@
 package miko.music
 
-import ackcord.data.{OutgoingEmbed, OutgoingEmbedFooter, EmbedField}
+import ackcord.data.{EmbedField, OutgoingEmbed, OutgoingEmbedAuthor, OutgoingEmbedFooter}
 import com.sedmelluq.discord.lavaplayer.player.AudioPlayer
 import com.sedmelluq.discord.lavaplayer.tools.FriendlyException
 import com.sedmelluq.discord.lavaplayer.track.AudioTrack
@@ -22,6 +22,7 @@ object MusicHelper {
 
     val trackInfo = s"**[${track.getInfo.title}](${track.getInfo.uri})**"
     embed.copy(
+      author = Some(OutgoingEmbedAuthor(track.getInfo.author)),
       description = Some(embed.description.fold(trackInfo)(s => s"$s $trackInfo")),
       footer = Some(OutgoingEmbedFooter(footer.mkString("|")))
     )
@@ -30,12 +31,11 @@ object MusicHelper {
   def formatDuration(millis: Long): String = {
     val seconds = millis / 1000
     val minutes = seconds / 60
-    val hours = minutes / 60
+    val hours   = minutes / 60
 
-    if(hours != 0) {
+    if (hours != 0) {
       "%02d:%02d:%02d".format(hours, minutes % 60, seconds % 60)
-    }
-    else {
+    } else {
       "%02d:%02d".format(minutes % 60, seconds % 60)
     }
   }
@@ -47,9 +47,15 @@ object MusicHelper {
       case FriendlyException.Severity.COMMON =>
         embed.copy(color = Some(Color.Warning), fields = embed.fields :+ reason)
       case FriendlyException.Severity.SUSPICIOUS =>
-        embed.copy(color = Some(Color.Failure), fields = embed.fields :+ EmbedField("Severity:", "Suspicious") :+ reason)
+        embed.copy(
+          color = Some(Color.Failure),
+          fields = embed.fields :+ EmbedField("Severity:", "Suspicious") :+ reason
+        )
       case FriendlyException.Severity.FAULT =>
-        embed.copy(color = Some(Color.Fatal), fields = embed.fields :+ EmbedField("Severity:", "Internal error") :+ reason)
+        embed.copy(
+          color = Some(Color.Fatal),
+          fields = embed.fields :+ EmbedField("Severity:", "Internal error") :+ reason
+        )
     }
   }
 

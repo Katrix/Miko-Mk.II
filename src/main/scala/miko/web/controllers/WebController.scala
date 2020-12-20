@@ -3,7 +3,7 @@ package miko.web.controllers
 import java.time.{Instant, OffsetDateTime}
 import java.util.UUID
 
-import ackcord.data.{GuildCategory, GuildChannel, GuildGatewayMessage, GuildId, Message, MessageType, Permission, RawSnowflake, SnowflakeType, TextGuildChannel, User, VoiceGuildChannel}
+import ackcord.data._
 import ackcord.requests.{GetCurrentUser, OAuth, RequestResponse}
 import ackcord.util.GuildRouter
 import akka.http.scaladsl.model.headers.OAuth2BearerToken
@@ -105,7 +105,7 @@ class WebController(
       Seq(OAuth.Scope.Identify),
       state.toString,
       self.authenticateOAuth(None, None).absoluteURL,
-      OAuth.PromptType.NonePrompt
+      OAuth.PromptType.Consent
     )
     Redirect(uri.toString).withSession("State" -> state.toString)
   }
@@ -127,7 +127,7 @@ class WebController(
           Seq(OAuth.Scope.Identify)
         )
         response <- requests
-          .copy(credentials = OAuth2BearerToken(token.accessToken))
+          .copy(settings = requests.settings.copy(credentials = Some(OAuth2BearerToken(token.accessToken))))
           .singleFuture(GetCurrentUser)
       } yield response match {
         case response: RequestResponse[User] =>

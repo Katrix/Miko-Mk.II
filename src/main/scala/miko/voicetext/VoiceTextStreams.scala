@@ -170,9 +170,10 @@ class VoiceTextStreams(
 
   def cleanupGuild: Flow[(Guild, CacheSnapshot), Request[_], NotUsed] =
     Flow[(Guild, CacheSnapshot)]
-      .flatMapMerge(requests.parallelism, {
+      .flatMapMerge(requests.settings.parallelism, {
         case (guild, c) => guildSettings(guild.id).map(settings => (guild, c, settings))
       })
+      .filter(_._3.voiceText.enabled)
       .mapConcat {
         case (guild, cache, settingsObj) =>
           implicit val c: CacheSnapshot        = cache
@@ -185,12 +186,12 @@ class VoiceTextStreams(
             val (remaining, removeReqs) = removeIfEmpty(vChannel, guild)
 
             removeReqs ++ Source(remaining).flatMapMerge(
-              requests.parallelism,
+              requests.settings.parallelism,
               fixUsersInChannel(vChannel, _, guild)
             )
           }
       }
-      .flatMapMerge(requests.parallelism, identity)
+      .flatMapMerge(requests.settings.parallelism, identity)
 
   def shiftChannelsImpl: Flow[CacheSnapshot, RequestAnswer[Any], NotUsed] =
     Flow[CacheSnapshot]
@@ -203,7 +204,7 @@ class VoiceTextStreams(
 
   def shiftChannelsGuildFlow: Flow[(Guild, CacheSnapshot), Request[_], NotUsed] =
     Flow[(Guild, CacheSnapshot)].flatMapMerge(
-      requests.parallelism, {
+      requests.settings.parallelism, {
         case (guild, _) =>
           guildSettings(guild.id)
             .filter(_.voiceText.dynamicallyResizeChannels > 0)
@@ -270,7 +271,7 @@ class VoiceTextStreams(
       }
     }
 
-    val fixedUsers = Source(fixedUsersSeq).flatMapMerge(requests.parallelism, identity)
+    val fixedUsers = Source(fixedUsersSeq).flatMapMerge(requests.settings.parallelism, identity)
     exitRoomRequests ++ fixedUsers
   }
 

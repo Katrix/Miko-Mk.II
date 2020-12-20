@@ -248,7 +248,6 @@ object GuildMusicHandler {
     case object Prev                                    extends MusicCommand
     case object Clear                                   extends MusicCommand
     case object Shuffle                                 extends MusicCommand
-    case object Progress                                extends MusicCommand
     case class Seek(progress: Long, useOffset: Boolean) extends MusicCommand
     case object ToggleLoop                              extends MusicCommand
     case object Gui                                     extends MusicCommand

@@ -1,63 +1,69 @@
 package miko.image
 
 import ackcord.OptFuture
-import ackcord.commands._
 import ackcord.data.{OutgoingEmbed, OutgoingEmbedImage}
-import ackcord.syntax._
+import ackcord.slashcommands.{Command, ResolvedCommandInteraction}
 import ackcord.util.JsonSome
+import akka.actor.typed.ActorRef
 import akka.actor.typed.scaladsl.AskPattern._
-import akka.actor.typed.{ActorRef, ActorSystem}
 import akka.util.Timeout
-import miko.commands.{CommandCategory, MikoCommandComponents, MikoCommandController}
+import miko.commands.{MikoCommandComponents, MikoSlashCommandController}
 import miko.util.Color
 
 import scala.concurrent.duration._
 
 class ImageCommands(imageCache: ActorRef[ImageCache.Command])(implicit components: MikoCommandComponents)
-    extends MikoCommandController(components) {
+    extends MikoSlashCommandController(components) {
 
-  def imageCommand(tpe: ImageType): Command[Option[String]] = Command.parsing[Option[String]].asyncOptRequest {
-    implicit m =>
-      def descEmbed(str: String): Some[OutgoingEmbed] = Some(OutgoingEmbed(description = Some(str)))
-      implicit val system: ActorSystem[Nothing]       = this.requests.system
-      implicit val timeout: Timeout                   = Timeout(30.seconds)
+  def imageCommand(
+      name: String,
+      description: String,
+      tpe: ImageType
+  ): Command[ResolvedCommandInteraction, Option[String]] =
+    Command
+      .named(name, description)
+      .withParams(string("Tags", "The tags to search for. Seperate multiple tags with +").notRequired)
+      .handle { implicit m =>
+        def descEmbed(str: String): Seq[OutgoingEmbed] = Seq(OutgoingEmbed(description = Some(str)))
+        implicit val timeout: Timeout                  = Timeout(30.seconds)
 
-      val tags = m.parsed.map(_.split("\\+").toSet).getOrElse(Set.empty)
+        val tags = m.args.map(_.split("\\+").toSet).getOrElse(Set.empty)
 
-      val cachedImage = imageCache.ask[ImageCache.ImageReply](
-        respondTo => ImageCache.ImageRequest(tpe, tags, allowExplicit = false, replyTo = respondTo)
-      )
-      val msg = requests.singleFutureSuccess(m.textChannel.sendMessage(embed = descEmbed("Loading picture...")))
+        val cachedImage = imageCache.ask[ImageCache.ImageReply](
+          respondTo => ImageCache.ImageRequest(tpe, tags, allowExplicit = false, replyTo = respondTo)
+        )
 
-      OptFuture.fromFuture(
-        cachedImage.zip(msg).map {
-          case (ImageCache.FailedToGetImage(e), rawMsg) =>
-            rawMsg.toMessage.edit(
-              embed = JsonSome(
-                OutgoingEmbed(
-                  description = Some(s"Failed to get image: ${e.getMessage}"),
-                  color = Some(Color.Failure)
+        sendEmbed(descEmbed("Loading picture...")).doAsync { implicit t =>
+          OptFuture.fromFuture(cachedImage).flatMap {
+            case ImageCache.FailedToGetImage(e) =>
+              editOriginalMessage(
+                embeds = JsonSome(
+                  Seq(
+                    OutgoingEmbed(
+                      description = Some(s"Failed to get image: ${e.getMessage}"),
+                      color = Some(Color.Failure)
+                    )
+                  )
                 )
               )
-            )
-          case (ImageCache.GotImage(CachedImage(img, _, _, _)), rawMsg) =>
-            rawMsg.toMessage.edit(
-              embed = JsonSome(
-                OutgoingEmbed(
-                  image = Some(OutgoingEmbedImage(img.toString())),
-                  color = Some(Color.Success),
-                  description = Some("Here's your image")
+            case ImageCache.GotImage(CachedImage(img, _, _, _)) =>
+              editOriginalMessage(
+                embeds = JsonSome(
+                  Seq(
+                    OutgoingEmbed(
+                      image = Some(OutgoingEmbedImage(img.toString())),
+                      color = Some(Color.Success),
+                      description = Some("Here's your image")
+                    )
+                  )
                 )
               )
-            )
+          }
         }
-      )
-  }
+      }
 
-  val safebooru: NamedDescribedCommand[Option[String]] =
-    imageCommand(ImageType.Safebooru)
-      .toNamed(named(Seq("safebooru"), CommandCategory.General, _.general.safebooru))
-      .toDescribed(
-        CommandDescription("Safebooru", "Fetch an image from safebooru", extra = CommandCategory.General.extra)
-      )
+  //CommandCategory.General.safebooru
+  //CommandCategory.General.extra
+  val safebooru: Command[ResolvedCommandInteraction, Option[String]] =
+    imageCommand("safebooru", "Fetch an image from safebooru", ImageType.Safebooru)
 }

@@ -47,7 +47,7 @@ class ChannelMusicController(
     implicit requests: Requests,
     webEvents: WebEvents,
     settings: SettingsAccess,
-    runtime: zio.Runtime[ZEnv],
+    runtime: zio.Runtime[ZEnv]
 ) extends AbstractBehavior[ChannelMusicController.Command](ctx) {
   import ChannelMusicController._
   import GuildMusicHandler.MusicCommand._
@@ -340,11 +340,18 @@ class ChannelMusicController(
         case NowPlaying =>
           val embedToSend =
             if (hasTrack) {
+              val position = MusicHelper.formatDuration(playingTrack.getPosition)
+              val duration = MusicHelper.formatDuration(playingTrack.getDuration)
+
               MusicHelper
                 .appendTrackInfo(
                   player,
                   playingTrack,
-                  OutgoingEmbed(title = Some("Now playing"), color = Some(Color.Success))
+                  OutgoingEmbed(
+                    title = Some("Now playing"),
+                    color = Some(Color.Success),
+                    fields = Seq(EmbedField("Position", s"$position / $duration"))
+                  )
                 )
             } else {
               OutgoingEmbed(description = Some("No track currently playing"), color = Some(Color.Failure))
@@ -387,20 +394,6 @@ class ChannelMusicController(
         case Shuffle =>
           shuffleTracks()
           sendStandardEmbed("Shuffled the playlist")
-          Behaviors.same
-
-        case Progress =>
-          val msg = if (hasTrack) {
-            val position = MusicHelper.formatDuration(playingTrack.getPosition)
-            val duration = MusicHelper.formatDuration(playingTrack.getDuration)
-
-            s"Current progress is $position of $duration"
-          } else {
-            "No track playing"
-          }
-
-          //TODO: Better formatting
-          sendStandardEmbed(msg, if (hasTrack) Color.Success else Color.Failure)
           Behaviors.same
 
         case Seek(progress, useOffset) =>
@@ -550,7 +543,7 @@ object ChannelMusicController {
       implicit requests: Requests,
       webEvents: WebEvents,
       settings: SettingsAccess,
-      runtime: zio.Runtime[ZEnv],
+      runtime: zio.Runtime[ZEnv]
   ): Behavior[Command] =
     Behaviors.setup { ctx =>
       Behaviors.withTimers { timers =>
