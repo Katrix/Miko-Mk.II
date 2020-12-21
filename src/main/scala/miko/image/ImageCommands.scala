@@ -7,7 +7,9 @@ import ackcord.util.JsonSome
 import akka.actor.typed.ActorRef
 import akka.actor.typed.scaladsl.AskPattern._
 import akka.util.Timeout
-import miko.commands.{MikoCommandComponents, MikoSlashCommandController}
+import miko.commands.{CommandCategory, MikoCommandComponents, MikoSlashCommandController}
+import miko.settings.GuildSettings
+import miko.settings.GuildSettings.Commands.Permissions.CommandPermission
 import miko.util.Color
 
 import scala.concurrent.duration._
@@ -18,9 +20,12 @@ class ImageCommands(imageCache: ActorRef[ImageCache.Command])(implicit component
   def imageCommand(
       name: String,
       description: String,
+      getPermissions: GuildSettings.Commands.Permissions => CommandPermission,
       tpe: ImageType
   ): Command[ResolvedCommandInteraction, Option[String]] =
     Command
+      .andThen(canExecute(CommandCategory.General, getPermissions))
+      .withExtra(CommandCategory.General.slashExtra)
       .named(name, description)
       .withParams(string("Tags", "The tags to search for. Seperate multiple tags with +").notRequired)
       .handle { implicit m =>
@@ -62,8 +67,6 @@ class ImageCommands(imageCache: ActorRef[ImageCache.Command])(implicit component
         }
       }
 
-  //CommandCategory.General.safebooru
-  //CommandCategory.General.extra
   val safebooru: Command[ResolvedCommandInteraction, Option[String]] =
-    imageCommand("safebooru", "Fetch an image from safebooru", ImageType.Safebooru)
+    imageCommand("safebooru", "Fetch an image from safebooru", _.general.safebooru, ImageType.Safebooru)
 }

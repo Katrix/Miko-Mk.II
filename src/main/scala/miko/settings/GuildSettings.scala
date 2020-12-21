@@ -200,7 +200,6 @@ object GuildSettings {
           scQueue: CommandPermission = CommandPermission.Allow,
           gui: CommandPermission = CommandPermission.Allow,
           seek: CommandPermission = CommandPermission.Allow,
-          progress: CommandPermission = CommandPermission.Allow,
           loop: CommandPermission = CommandPermission.Allow
       )
       object Music {

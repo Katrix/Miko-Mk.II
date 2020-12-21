@@ -151,7 +151,7 @@ class MikoRoot(
 
       case RegisterCommands(appId, initial) =>
         if (initial) {
-          timers.startSingleTimer(RegisterCommands(appId, initial = false), 10.seconds)
+          timers.startSingleTimer(RegisterCommands(appId, initial = false), 5.seconds)
         } else {
           val vtStreams = new VoiceTextStreams
           runVtStreams(vtStreams)

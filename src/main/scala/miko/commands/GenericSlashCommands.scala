@@ -19,39 +19,39 @@ class GenericSlashCommands(vtStreams: VoiceTextStreams)(
     blockingStreamable: Streamable[RIO[Blocking, *]]
 ) extends MikoSlashCommandController(components) {
 
-  //CommandCategory.General.cleanup
-  //CommandCategory.General.extra
   val cleanup: Command[GuildCommandInteraction, NotUsed] =
-    GuildCommand.command("cleanup", "Fixes missing channels and permissions") { implicit m =>
-      sendMessage("Starting cleanup").doAsync { implicit t =>
-        for {
-          _ <- OptFuture.fromFuture(
-            vtStreams.cleanupGuild.runWith(Source.single((m.guild, m.cache)), requests.sinkIgnore[Any])._2
-          )
-          _ <- editOriginalMessage(content = JsonSome("Cleanup done"))
-        } yield ()
+    GuildCommand
+      .andThen(canExecute(CommandCategory.General, _.general.cleanup))
+      .withExtra(CommandCategory.General.slashExtra)
+      .command("cleanup", "Fixes missing channels and permissions") { implicit m =>
+        sendMessage("Starting cleanup").doAsync { implicit t =>
+          for {
+            _ <- OptFuture.fromFuture(
+              vtStreams.cleanupGuild.runWith(Source.single((m.guild, m.cache)), requests.sinkIgnore[Any])._2
+            )
+            _ <- editOriginalMessage(content = JsonSome("Cleanup done"))
+          } yield ()
+        }
       }
-    }
 
-  //CommandCategory.General.shiftChannels
-  //CommandCategory.General.extra
   val shiftChannels: Command[GuildCommandInteraction, NotUsed] =
-    GuildCommand.command(
-      "shiftChannels",
-      "Manually triggers the process to create new voice channels when existing ones are in use"
-    ) { implicit m =>
-      sendMessage("Starting channel shift").doAsync { implicit t =>
-        for {
-          _ <- OptFuture.fromFuture(
-            vtStreams.shiftChannelsGuildFlow.runWith(Source.single((m.guild, m.cache)), requests.sinkIgnore[Any])._2
-          )
-          _ <- editOriginalMessage(content = JsonSome("Channel shift done"))
-        } yield ()
+    GuildCommand
+      .andThen(canExecute(CommandCategory.General, _.general.shiftChannels))
+      .withExtra(CommandCategory.General.slashExtra)
+      .command(
+        "shiftChannels",
+        "Manually triggers the process to create new voice channels when existing ones are in use"
+      ) { implicit m =>
+        sendMessage("Starting channel shift").doAsync { implicit t =>
+          for {
+            _ <- OptFuture.fromFuture(
+              vtStreams.shiftChannelsGuildFlow.runWith(Source.single((m.guild, m.cache)), requests.sinkIgnore[Any])._2
+            )
+            _ <- editOriginalMessage(content = JsonSome("Channel shift done"))
+          } yield ()
+        }
       }
-    }
 
-  //CommandCategory.General.genKeys
-  //CommandCategory.General.extra
   val genKeys: Command[GuildCommandInteraction, (String, Option[Boolean])] =
     GuildCommand
       .andThen(CommandTransformer.needPermission(Permission.Administrator))
@@ -159,33 +159,34 @@ class GenericSlashCommands(vtStreams: VoiceTextStreams)(
         }
       }
 
-  //CommandCategory.General.info
-  //CommandCategory.General.extra
   val info: Command[ResolvedCommandInteraction, NotUsed] =
-    Command.command("info", "Get basic info about the bot") { m =>
-      val mb          = 1024d * 1024d
-      val format      = NumberFormat.getInstance()
-      val totalMemory = sys.runtime.totalMemory()
-      val freeMemory  = sys.runtime.freeMemory()
-      val maxMemory   = sys.runtime.maxMemory()
-      val usedMemory  = totalMemory - freeMemory
+    Command
+      .andThen(canExecute(CommandCategory.General, _.general.info))
+      .withExtra(CommandCategory.General.slashExtra)
+      .command("info", "Get basic info about the bot") { m =>
+        val mb          = 1024d * 1024d
+        val format      = NumberFormat.getInstance()
+        val totalMemory = sys.runtime.totalMemory()
+        val freeMemory  = sys.runtime.freeMemory()
+        val maxMemory   = sys.runtime.maxMemory()
+        val usedMemory  = totalMemory - freeMemory
 
-      def infoField(title: String, content: String) = EmbedField(title, content, Some(true))
+        def infoField(title: String, content: String) = EmbedField(title, content, Some(true))
 
-      val embed = OutgoingEmbed(
-        title = Some("Miko Mk.II Info"),
-        fields = Seq(
-          infoField("Author", "Katrix#9696"),
-          infoField("Framework", "AckCord"),
-          infoField("Total Memory", s"${format.format(totalMemory / mb)} MB"),
-          infoField("Free Memory", s"${format.format(freeMemory / mb)} MB"),
-          infoField("Max Memory", s"${format.format(maxMemory / mb)} MB"),
-          infoField("Used Memory", s"${format.format(usedMemory / mb)} MB"),
-          infoField("Owner(s)", config.botOwners.mkString("\n")),
-          infoField("Help command", s"`@${m.cache.botUser.username} !help`")
+        val embed = OutgoingEmbed(
+          title = Some("Miko Mk.II Info"),
+          fields = Seq(
+            infoField("Author", "Katrix#9696"),
+            infoField("Framework", "AckCord"),
+            infoField("Total Memory", s"${format.format(totalMemory / mb)} MB"),
+            infoField("Free Memory", s"${format.format(freeMemory / mb)} MB"),
+            infoField("Max Memory", s"${format.format(maxMemory / mb)} MB"),
+            infoField("Used Memory", s"${format.format(usedMemory / mb)} MB"),
+            infoField("Owner(s)", config.botOwners.mkString("\n")),
+            infoField("Help command", s"`@${m.cache.botUser.username} !help`")
+          )
         )
-      )
 
-      sendEmbed(embeds = Seq(embed))
-    }
+        sendEmbed(embeds = Seq(embed))
+      }
 }
