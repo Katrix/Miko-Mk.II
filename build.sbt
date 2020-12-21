@@ -1,3 +1,5 @@
+import scala.concurrent.duration._
+
 ThisBuild / turbo := true
 
 lazy val sharedSettings = Seq(
@@ -34,7 +36,7 @@ lazy val miko = project
     name := "Miko Mk.II",
     version := mikoVersion,
     resolvers += Resolver.JCenterRepository,
-    updateOptions := updateOptions.value.withLatestSnapshots(true),
+    csrConfiguration := csrConfiguration.value.withTtl(10.minute),
     libraryDependencies ++= Seq(
       "net.katsstuff" %% "ackcord-core"            % ackCordVersion,
       "net.katsstuff" %% "ackcord-commands"        % ackCordVersion,
