@@ -225,7 +225,9 @@ class WebController(
         activity = None,
         application = None,
         messageReference = None,
-        flags = None
+        flags = None,
+        stickers = None,
+        referencedMessage = None
       )
     }
   }
