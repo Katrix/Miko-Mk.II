@@ -218,16 +218,16 @@ class VoiceTextStreams(
   ): Source[Request[_], NotUsed] = {
     val permGroup = permGroupForChannel(vChannel)
 
-    val inVoiceChannel = vChannel.connectedMembers(guild)
+    val inVoiceChannel    = vChannel.connectedMembers(guild)
+    val inVoiceChannelIds = inVoiceChannel.map(_.userId)
 
     val (textConnectedIter, allowIter, disallowIter) =
       tChannel.permissionOverwrites
         .filter(_._2.`type` == PermissionOverwriteType.Member)
-        .flatMap {
-          case (userId, overwrite) =>
-            guild.memberById(UserId(userId)).map { user =>
-              (user, user -> overwrite.allow, user -> overwrite.deny)
-            }
+        .map {
+          case (rawUserId, overwrite) =>
+            val userId: UserId = UserId(rawUserId)
+            (userId, userId -> overwrite.allow, userId -> overwrite.deny)
         }
         .unzip3
 
@@ -235,36 +235,37 @@ class VoiceTextStreams(
     val currentAllow    = allowIter.toMap
     val currentDisallow = disallowIter.toMap
 
-    val exitRoomRequestsSeq = textConnected
-      .filterNot(inVoiceChannel.contains)
-      .filter(MiscHelper.canHandlerMember(guild, _))
-      .map { member =>
-        log.info(
-          "Removed invalid user {} from room {}",
-          member.user.map(_.username).getOrElse(""),
-          tChannel.name
-        )
-        userExitTChannel(member, tChannel, vChannel, guild)
-      }
+    val exitRoomRequestsSeq =
+      textConnected
+        .filterNot(inVoiceChannelIds.contains)
+        .filter(MiscHelper.canHandlerMember(guild, _))
+        .map { member =>
+          log.info(
+            "Removed invalid user {} from room {}",
+            member.user.map(_.username).getOrElse(""),
+            tChannel.name
+          )
+          userExitTChannel(member, tChannel, vChannel, guild)
+        }
 
     val exitRoomRequests = Source(exitRoomRequestsSeq)
 
     val fixedUsersSeq = inVoiceChannel.map { inVoice =>
+      def wrongPerms(toCheck: Map[UserId, Permission], permsToCheck: Permission) =
+        !toCheck.get(inVoice.userId).contains(permsToCheck)
+
       inVoice.user.fold(Source.empty[Request[_]]) { inVoiceUser =>
         lazy val userChannelPerms = userPerms(inVoiceUser.id, permGroup, _.inside)
 
-        if (!textConnected.contains(inVoice)) {
+        if (!textConnected.contains(inVoice.userId)) {
           log.info(
             "Found channel {} with without user {}. Fixed",
             vChannel.name,
             inVoiceUser.username
           )
           userEnterVChannel(inVoice, vChannel, guild)
-        } else if (!currentAllow
-                     .get(inVoice)
-                     .contains(userChannelPerms.allowNative) || !currentDisallow
-                     .get(inVoice)
-                     .contains(userChannelPerms.denyNative)) {
+        } else if (wrongPerms(currentAllow, userChannelPerms.allowNative) ||
+                   wrongPerms(currentDisallow, userChannelPerms.denyNative)) {
           log.info("Found user {} with wrong permissions. Fixed", inVoiceUser.username)
           Source.single(applyPerms(inVoice, tChannel, guild, userChannelPerms))
         } else Source.empty
