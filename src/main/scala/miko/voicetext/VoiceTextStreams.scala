@@ -238,7 +238,10 @@ class VoiceTextStreams(
     val exitRoomRequestsSeq =
       textConnected
         .filterNot(inVoiceChannelIds.contains)
-        .filter(MiscHelper.canHandlerMember(guild, _))
+        .collect {
+          case userId if guild.memberById(userId).exists(MiscHelper.canHandlerMember(guild, _)) =>
+            guild.memberById(userId).get
+        }
         .map { member =>
           log.info(
             "Removed invalid user {} from room {}",
