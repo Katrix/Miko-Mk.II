@@ -55,7 +55,7 @@
     "@fortawesome/vue-fontawesome": "^0.1.10",
     "bootstrap": "^4.5.2",
     "bootstrap-vue": "^2.16.0",
-    "lodash": "^4.17.20",
+    "lodash": "^4.17.21",
     "popper.js": "^1.16.1",
     "regenerator-runtime": "^0.13.7",
     "vue": "^2.6.11",
