@@ -38,7 +38,8 @@ object NamedPermission extends StringEnum[NamedPermission] {
   case object ManageNicknames     extends NamedPermission("manage_nicknames", Permission.ManageNicknames)
   case object ManageRoles         extends NamedPermission("manage_roles", Permission.ManageRoles)
   case object ManageWebhooks      extends NamedPermission("manage_webhooks", Permission.ManageWebhooks)
-  case object ManageEmojis        extends NamedPermission("manage_emojis", Permission.ManageEmojis)
+  case object ManageEmojisAndStickers
+      extends NamedPermission("manage_emojis_and_stickers", Permission.ManageEmojisAndStickers)
 
   def fromPermission(permission: Permission): Seq[NamedPermission] =
     values.filter(named => permission.hasPermissions(named.permission))

@@ -16,7 +16,7 @@
                 <h2 class="h5">Invite Miko to a new guild</h2>
                 <a
                   class="btn btn-primary"
-                  :href="`https://discordapp.com/api/oauth2/authorize?client_id=${config.clientId}&scope=bot&permissions=335670360`"
+                  :href="`https://discordapp.com/api/oauth2/authorize?client_id=${config.clientId}&scope=bot%20applications.commands&permissions=335670360`"
                 >
                   Invite Miko
                 </a>

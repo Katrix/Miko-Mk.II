@@ -31,7 +31,7 @@
     <logger name="org.apache.http.client.protocol.ResponseProcessCookies" level="INFO" />
     <logger name="org.apache.http.conn.ssl.SSLConnectionSocketFactory" level="INFO" />
 
-    <root level="INFO">
+    <root level="DEBUG">
         <appender-ref ref="STDOUT" />
     </root>
 

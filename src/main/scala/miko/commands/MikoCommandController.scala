@@ -5,10 +5,10 @@ import ackcord.commands._
 import ackcord.data.{GuildChannel, Message}
 import akka.NotUsed
 import akka.stream.scaladsl.Flow
+import cats.effect.unsafe.IORuntime
 import miko.MikoConfig
 import miko.settings.GuildSettings.Commands.Permissions.{CommandPermission, CommandPermissionMerge}
 import miko.settings.{GuildSettings, NamedPermission, SettingsAccess}
-import zio.ZEnv
 
 import scala.concurrent.Future
 
@@ -16,7 +16,7 @@ abstract class MikoCommandController(components: MikoCommandComponents) extends 
 
   def config: MikoConfig            = components.config
   def settings: SettingsAccess      = components.settingsAccess
-  def zioRuntime: zio.Runtime[ZEnv] = components.runtime
+  implicit def ioRuntime: IORuntime = components.runtime
 
   def botOwnerFilter[M[A] <: CommandMessage[A]]: CommandFunction[M, M] = new CommandFunction[M, M] {
     override def flow[A]: Flow[M[A], Either[Option[CommandError], M[A]], NotUsed] = Flow[M[A]].map { m =>
@@ -29,7 +29,7 @@ abstract class MikoCommandController(components: MikoCommandComponents) extends 
     m.guild(c)
       .map(_.id)
       .fold[Future[GuildSettings]](Future.failed(new NoSuchElementException("No guild settings for message")))(
-        guildId => zioRuntime.unsafeRunToFuture(settings.getGuildSettings(guildId))
+        guildId => settings.getGuildSettings(guildId).unsafeToFuture()
       )
 
   private def checkPermissions(m: Message, permission: CommandPermission)(implicit c: CacheSnapshot): Boolean =

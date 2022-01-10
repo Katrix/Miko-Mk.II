@@ -13,7 +13,7 @@ class MikoConfig(val config: Config) {
   lazy val botOwners: Seq[UserId] =
     config.getStringList("miko.bot-owners").asScala.toSeq.map((RawSnowflake(_: String)).andThen(UserId.apply))
 
-  lazy val slaveTokens: Seq[String] = config.getStringList("miko.slave-tokens").asScala.toSeq
+  lazy val secondaryTokens: Seq[String] = config.getStringList("miko.secondary-tokens").asScala.toSeq
 
   lazy val dbUrl: String      = config.getString("miko.db.url")
   lazy val dbUsername: String = config.getString("miko.db.username")

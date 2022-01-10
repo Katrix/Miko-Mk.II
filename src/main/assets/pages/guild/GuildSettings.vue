@@ -5,6 +5,7 @@
       <b-nav class="aside-menu-list" vertical pills>
         <li class="nav-item">
           <a class="nav-link" :class="[active === 'general' && 'active']" href="#setting-general">General</a>
+          <a class="nav-link" :class="[active === 'modLog' && 'active']" href="#setting-mogLog">ModLog</a>
           <a class="nav-link" :class="[active === 'voiceText' && 'active']" href="#setting-voiceText">VoiceText</a>
           <a class="nav-link" :class="[active === 'commands' && 'active']" href="#setting-commands">General</a>
         </li>
@@ -43,11 +44,35 @@
         >
           <b-form-select
             id="staffChatSelect"
-            v-model="newSettings.channels.staffChatChannel"
+            v-model="newSettings.channels.staffChannel"
             style="min-width: 20%; width: auto;"
             :options="textChannelOptions"
           />
         </b-form-group>
+
+        <h3 id="setting-modLog">ModLog</h3>
+
+        <b-form-group
+            label-for="modLogChannelSelect"
+            label="Mod log channel"
+            description="A channel where Miko will drop changes to things in the server"
+        >
+          <b-form-select
+              id="modLogChannelSelect"
+              v-model="newSettings.modLog.channelId"
+              style="min-width: 20%; width: auto;"
+              :options="textChannelOptions"
+          />
+        </b-form-group>
+
+        <b-form-group label="Ignored Audit log events" v-slot="{ariaDescribedBy}">
+          <b-form-checkbox-group
+              id="modLogIgnoredAuditLogEvents"
+              v-model="newSettings.modLog.ignoredAuditLogEvents"
+              :options="auditLogEventOptions"
+              :aria-describedby="ariaDescribedBy" />
+        </b-form-group>
+
 
         <h3 id="setting-voiceText">VoiceText</h3>
         <b-form-checkbox id="vtEnabled" v-model="newSettings.voiceText.enabled">
@@ -195,7 +220,7 @@
 
 <script>
 import { mapState, mapGetters } from 'vuex'
-import { BNav, BFormGroup, BFormSelect, BFormCheckbox, BFormInput } from 'bootstrap-vue'
+import { BNav, BFormGroup, BFormSelect, BFormCheckbox, BFormCheckboxGroup, BFormInput } from 'bootstrap-vue'
 import VoiceTextGroup from '../../components/VoiceTextGroup'
 
 export default {
@@ -205,6 +230,7 @@ export default {
     BFormGroup,
     BFormSelect,
     BFormCheckbox,
+    BFormCheckboxGroup,
     BFormInput,
   },
   data() {
@@ -212,7 +238,7 @@ export default {
       newSettings: {
         channels: {
           botSpamChannel: null,
-          staffChatChannel: null,
+          staffChannel: null,
         },
         music: {
           defaultMusicVolume: 100,
@@ -272,6 +298,10 @@ export default {
             },
           },
         },
+        modLog: {
+          channelId: null,
+          ignoredAuditLogEvents: []
+        }
       },
       newChannelOverrideId: null,
       newCategoryOverrideId: null,
@@ -281,7 +311,7 @@ export default {
     ...mapState('guild', ['settings', 'textChannels', 'voiceChannels', 'categories']),
     ...mapGetters('guild', ['voiceChannelsMap', 'categoriesMap']),
     active() {
-      return this.$route.hash.substring('#cmd'.length)
+      return this.$route.hash.substring('#setting-'.length)
     },
     textChannelOptions() {
       return [{ value: null, text: 'None' }].concat(this.makeOptions(this.textChannels))
@@ -305,6 +335,58 @@ export default {
         this.makeOptions(this.categories.filter((c) => !(c.id in this.newSettings.voiceText.perms.overrideCategory)))
       )
     },
+    auditLogEventOptions() {
+      return [
+        "GuildUpdate",
+        "ChannelCreate",
+        "ChannelUpdate",
+        "ChannelDelete",
+        "ChannelOverwriteCreate",
+        "ChannelOverwriteUpdate",
+        "ChannelOverwriteDelete",
+        "MemberKick",
+        "MemberPrune",
+        "MemberBanAdd",
+        "MemberBanRemove",
+        "MemberUpdate",
+        "MemberRoleUpdate",
+        "MemberMove",
+        "MemberDisconnect",
+        "BotAdd",
+        "RoleCreate",
+        "RoleUpdate",
+        "RoleDelete",
+        "InviteCreate",
+        "InviteUpdate",
+        "InviteDelete",
+        "WebhookCreate",
+        "WebhookUpdate",
+        "WebhookDelete",
+        "EmojiCreate",
+        "EmojiUpdate",
+        "EmojiDelete",
+        "MessageDelete",
+        "MessageBulkDelete",
+        "MessagePin",
+        "MessageUnpin",
+        "IntegrationCreate",
+        "IntegrationUpdate",
+        "IntegrationDelete",
+        "StageInstanceCreate",
+        "StageInstanceUpdate",
+        "StageInstanceDelete",
+        "StickerCreate",
+        "StickerUpdate",
+        "StickerDelete",
+        "GuildScheduledEventCreate",
+        "GuildScheduledEventUpdate",
+        "GuildScheduledEventDelete",
+        "ThreadCreate",
+        "ThreadUpdate",
+        "ThreadDelete",
+        "Unknown"
+      ]
+    }
   },
   watch: {
     settings: {
@@ -323,6 +405,7 @@ export default {
       return [...channels].sort((a, b) => a.position - b.position).map((c) => ({ value: c.id, text: c.name }))
     },
     submit() {
+      //TODO: Expose in the UI that updates have been applied
       this.$store.dispatch({
         type: 'guild/settings/updateSettings',
         settings: this.newSettings,

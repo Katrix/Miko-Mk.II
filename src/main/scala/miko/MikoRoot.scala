@@ -2,11 +2,10 @@ package miko
 
 import ackcord.cachehandlers.CacheTypeRegistry
 import ackcord.commands.{CommandConnector, CommandDescription}
-import ackcord.data.{GuildId, RawSnowflake, VoiceGuildChannel}
+import ackcord.data.{ApplicationId, GuildId, VoiceGuildChannel}
 import ackcord.gateway.{GatewayEvent, GatewayIntents, GatewaySettings}
-import ackcord.requests.{BotAuthentication, Ratelimiter, RequestSettings, Requests}
-import ackcord.slashcommands.CommandRegistrar
-import ackcord.slashcommands.raw.RawInteraction
+import ackcord.interactions.InteractionsRegistrar
+import ackcord.requests.{BotAuthentication, Ratelimiter, RatelimiterActor, RequestSettings, Requests, SupervisionStreams}
 import ackcord.util.{GuildRouter, Streamable}
 import ackcord.{APIMessage, CacheSnapshot, CacheState, DiscordShard, Events}
 import akka.Done
@@ -19,26 +18,28 @@ import akka.http.scaladsl.model.Uri
 import akka.stream.ActorAttributes
 import akka.stream.scaladsl.Sink
 import akka.util.Timeout
+import cats.effect.IO
+import cats.effect.unsafe.IORuntime
 import com.sedmelluq.discord.lavaplayer.player.{AudioConfiguration, DefaultAudioPlayerManager}
 import com.sedmelluq.discord.lavaplayer.source.AudioSourceManagers
 import miko.commands._
 import miko.db.DBAccess
 import miko.image.{ImageCache, ImageCommands}
+import miko.instances.InstanceHandler
+import miko.logging.MakeModLog
 import miko.music.{AudioItemLoader, GuildMusicHandler, MusicCommands}
 import miko.settings.GuildSettings.Commands.Permissions.CommandPermission
 import miko.settings.SettingsAccess
-import miko.slaves.SlaveHandler
 import miko.util.SGFCPool
 import miko.voicetext.VoiceTextStreams
 import miko.web.WebEvents
 import org.slf4j.Logger
 import play.api.ApplicationLoader.DevContext
-import zio.blocking.Blocking
-import zio.{RIO, Task, ZEnv}
 
 import scala.concurrent.duration._
 import scala.concurrent.{Await, Future}
 import scala.util.control.NonFatal
+import scala.util.{Failure, Success}
 
 class MikoRoot(
     ctx: ActorContext[MikoRoot.Command],
@@ -49,10 +50,9 @@ class MikoRoot(
     implicit
     webEvents: WebEvents,
     settings: SettingsAccess,
-    db: DBAccess[Task],
-    taskStreamable: Streamable[Task],
-    blockingStreamable: Streamable[RIO[Blocking, *]],
-    runtime: zio.Runtime[ZEnv]
+    db: DBAccess[IO],
+    ioStreamable: Streamable[IO],
+    ioRuntime: IORuntime
 ) extends AbstractBehavior[MikoRoot.Command](ctx) {
   import MikoRoot._
 
@@ -60,14 +60,19 @@ class MikoRoot(
 
   implicit val system: ActorSystem[Nothing] = context.system
   implicit val config: MikoConfig           = MikoConfig()
-  implicit val requests: Requests = new Requests(
-    RequestSettings(
-      Some(BotAuthentication(config.token)),
-      context.spawn(Ratelimiter(), "Ratelimiter")
-    )
-  )
 
-  //TODO: Mark Cache as deprecated
+  private val ratelimiterActor = context.spawn(RatelimiterActor(), "Ratelimiter")
+
+  implicit val requests: Requests = {
+    implicit val timeout: Timeout = 1.minute
+    new Requests(
+      RequestSettings(
+        Some(BotAuthentication(config.token)),
+        Ratelimiter.ofActor(ratelimiterActor)
+      )
+    )
+  }
+
   implicit val events: Events = Events.create(
     ignoredEvents = Seq(
       classOf[GatewayEvent.PresenceUpdate],
@@ -80,7 +85,7 @@ class MikoRoot(
     cacheTypeRegistry = CacheTypeRegistry.noPresencesBansEmoji
   )
 
-  implicit val commandComponents: MikoCommandComponents = MikoCommandComponents(requests, config, settings, runtime)
+  implicit val commandComponents: MikoCommandComponents = MikoCommandComponents(requests, config, settings, ioRuntime)
 
   val cacheStorage: ActorRef[SGFCPool.Msg[CacheStorage.Command, CacheSnapshot]] =
     context.spawn(CacheStorage(events), "CacheStorage")
@@ -104,8 +109,8 @@ class MikoRoot(
     ),
     "DiscordShard"
   )
-  val slaveHandler: ActorRef[SlaveHandler.Command] =
-    context.spawn(SlaveHandler(events, wsUri), "SlaveHandler")
+  val instanceHandler: ActorRef[InstanceHandler.Command] =
+    context.spawn(InstanceHandler(events, wsUri), "InstanceHandler")
   val topMusicHandler: ActorRef[GuildRouter.Command[Nothing, GuildMusicHandler.Command]] =
     initializeMusic()
 
@@ -156,6 +161,10 @@ class MikoRoot(
           val vtStreams = new VoiceTextStreams
           runVtStreams(vtStreams)
           registerCommands(appId, vtStreams)
+
+          println("Starting ModLog")
+
+          SupervisionStreams.logAndContinue(events.subscribeAPI.to(MakeModLog.makeModLog(requests, settings))).run()
         }
 
         Behaviors.same
@@ -218,7 +227,7 @@ class MikoRoot(
     context.spawn(
       GuildRouter.partitioner(
         None,
-        guildId => GuildMusicHandler(guildId, man, events, slaveHandler, audioItemLoader),
+        guildId => GuildMusicHandler(guildId, man, events, instanceHandler, audioItemLoader),
         None,
         GuildRouter.OnShutdownSendMsg(GuildMusicHandler.Shutdown)
       ),
@@ -226,8 +235,8 @@ class MikoRoot(
     )
   }
 
-  private def registerCommands(appId: RawSnowflake, vtStreams: VoiceTextStreams): Unit = {
-    val genericCommands = new GenericCommands(vtStreams, devContext)
+  private def registerCommands(appId: ApplicationId, vtStreams: VoiceTextStreams): Unit = {
+    val genericCommands = new GenericCommands(devContext)
 
     //TODO: Add slash commands to help
     commandConnector.bulkRunNamedWithHelp(
@@ -255,37 +264,31 @@ class MikoRoot(
       musicCommands.musicCommand
     )
 
-    import ackcord.slashcommands.raw.CommandsProtocol._
     import system.executionContext
 
-    events
-      .commandInteractions[RawInteraction]
-      .to(CommandRegistrar.gatewayCommands(slashCommands: _*)(config.clientId, requests))
+    events.interactions
+      .to(InteractionsRegistrar.gatewayInteractions(slashCommands: _*)(config.clientId, requests))
       .run()
 
-    CommandRegistrar
-      .createGuildCommands(
-        appId,
-        GuildId("201938197171798017"),
-        requests,
-        slashCommands: _*
-      )
-      .onComplete(r => println(s"RegisterGuild: $r"))
+    InteractionsRegistrar.createGuildCommands(
+      appId,
+      GuildId("269988507378909186"),
+      requests,
+      replaceAll = true,
+      slashCommands: _*
+    ).onComplete(println)
 
-    CommandRegistrar
+    InteractionsRegistrar
       .createGlobalCommands(
         appId,
         requests,
+        replaceAll = true,
         slashCommands: _*
       )
-      .onComplete(r => println(s"RegisterGlobaL: $r"))
-
-    CommandRegistrar
-      .removeUnknownGuildCommands(appId, GuildId("201938197171798017"), requests, slashCommands: _*)
-      .onComplete(r => println(s"RemoveGuild: $r"))
-    CommandRegistrar
-      .removeUnknownGlobalCommands(appId, requests, slashCommands: _*)
-      .onComplete(r => println(s"RemoveGlobal: $r"))
+      .onComplete {
+        case Success(commands)  => log.info(s"Registered ${commands.size} commands")
+        case Failure(exception) => log.error("Failed to create commands", exception)
+      }
   }
 
   private def runVtStreams(vtStreams: VoiceTextStreams): Unit = {
@@ -299,7 +302,7 @@ class MikoRoot(
 
     events.subscribeAPI
       .collect {
-        case APIMessage.VoiceStateUpdate(vState, CacheState(current, previous)) if vState.guildId.isDefined =>
+        case APIMessage.VoiceStateUpdate(vState, CacheState(current, previous), _) if vState.guildId.isDefined =>
           (vState.guildId.get, vState.channelId, vState.userId, current, previous)
       }
       .addAttributes(ActorAttributes.logLevels(Logging.InfoLevel, Logging.InfoLevel, Logging.InfoLevel))
@@ -308,14 +311,14 @@ class MikoRoot(
 
     events.subscribeAPI
       .collect {
-        case APIMessage.ChannelUpdate(_, vChannel: VoiceGuildChannel, CacheState(current, previous)) =>
+        case APIMessage.ChannelUpdate(_, vChannel: VoiceGuildChannel, CacheState(current, previous), _) =>
           (vChannel, current, previous)
       }
       .to(vtStreams.channelUpdate)
       .run()
 
     events.subscribeAPI
-      .collect { case APIMessage.VoiceStateUpdate(_, CacheState(current, _)) => current }
+      .collect { case APIMessage.VoiceStateUpdate(_, CacheState(current, _), _) => current }
       .to(vtStreams.cleanup)
       .run()
   }
@@ -326,19 +329,18 @@ object MikoRoot {
       implicit
       webEvents: WebEvents,
       settings: SettingsAccess,
-      db: DBAccess[Task],
-      taskStreamable: Streamable[Task],
-      blockingStreamable: Streamable[RIO[Blocking, *]],
-      runtime: zio.Runtime[ZEnv]
+      db: DBAccess[IO],
+      ioStreamable: Streamable[IO],
+      ioRuntime: IORuntime
   ): Behavior[Command] =
     Behaviors.setup(ctx => Behaviors.withTimers(timers => new MikoRoot(ctx, timers, shutdown, devContext)))
 
   sealed trait Command
-  private case class PartTerminated(ref: ActorRef[_], replyTo: ActorRef[Done])       extends Command
-  private case class StopMusic(replyTo: ActorRef[Done])                              extends Command
-  private case class StopShard(replyTo: ActorRef[Done])                              extends Command
-  private case object Connect                                                        extends Command
-  private case class RegisterCommands(applicationId: RawSnowflake, initial: Boolean) extends Command
+  private case class PartTerminated(ref: ActorRef[_], replyTo: ActorRef[Done])        extends Command
+  private case class StopMusic(replyTo: ActorRef[Done])                               extends Command
+  private case class StopShard(replyTo: ActorRef[Done])                               extends Command
+  private case object Connect                                                         extends Command
+  private case class RegisterCommands(applicationId: ApplicationId, initial: Boolean) extends Command
 
   case class GetCacheStorage(replyTo: ActorRef[ActorRef[SGFCPool.Msg[CacheStorage.Command, CacheSnapshot]]])
       extends Command

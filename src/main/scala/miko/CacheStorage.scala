@@ -1,18 +1,14 @@
 package miko
 
-import java.nio.file.{Files, Paths}
-
-import ackcord.CacheSnapshot.BotUser
-import ackcord.data._
 import ackcord.{APIMessage, Cache, CacheSnapshot, MemoryCacheSnapshot}
 import akka.actor.typed._
 import akka.actor.typed.scaladsl._
 import akka.stream.typed.scaladsl.ActorSink
-import io.circe._
 import io.circe.syntax._
 import miko.util.SGFCPool
-import shapeless.tag.@@
+import miko.MikoProtocol._
 
+import java.nio.file.{Files, Paths}
 import scala.concurrent.duration._
 import scala.jdk.CollectionConverters._
 
@@ -79,19 +75,4 @@ object CacheStorage {
 
   sealed trait Command
   case object GetLatestCache extends Command
-
-  import MikoProtocol._
-  import io.circe.generic.auto._
-
-  implicit private val botUserEncoder: Encoder[User @@ BotUser] = (a: User @@ BotUser) => (a: User).asJson
-  implicit private val botUserDecoder: Decoder[User @@ BotUser] = (c: HCursor) =>
-    c.as[User].map(u => shapeless.tag[BotUser](u))
-
-  implicit private val cacheProcessorEncoder: Encoder[MemoryCacheSnapshot.CacheProcessor] =
-    (_: MemoryCacheSnapshot.CacheProcessor) => Json.Null
-  implicit private val cacheProcessorDecoder: Decoder[MemoryCacheSnapshot.CacheProcessor] =
-    (_: HCursor) => Right(MemoryCacheSnapshot.defaultCacheProcessor)
-
-  implicit private val memoryCacheSnapshotEncoder: Encoder[MemoryCacheSnapshot] = generic.semiauto.deriveEncoder
-  implicit private val memoryCacheSnapshotDecoder: Decoder[MemoryCacheSnapshot] = generic.semiauto.deriveDecoder
 }

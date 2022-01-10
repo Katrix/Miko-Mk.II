@@ -5,7 +5,7 @@ const guestState = {
   isLoading: false,
   channels: {
     botSpamChannel: null,
-    staffChatChannel: null,
+    staffChannel: null,
   },
   music: {
     defaultMusicVolume: 100,
@@ -78,6 +78,10 @@ const guestState = {
       },
     },
   },
+  modLog: {
+    channelId: null,
+    ignoredAuditLogEvents: []
+  }
 }
 
 const state = {
@@ -111,8 +115,8 @@ const mutations = {
 
 const actions = {
   async updateSettings(context, { settings }) {
-    const result = await API.request(`guild/${context.rootState.guild.activeGuildId}/settings`, 'POST', settings)
-    context.commit('setGuildSettings', { settings: result })
+    await API.request(`guild/${context.rootState.guild.activeGuildId}/settings`, 'POST', settings)
+    context.commit('setGuildSettings', { settings })
   },
   async loadSettings(context) {
     if (!context.state.isLoading) {

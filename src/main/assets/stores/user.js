@@ -2,13 +2,7 @@ import Vue from 'vue'
 import { API } from '../api'
 
 const state = {
-  availableGuilds: [
-    {
-      id: '201938197171798017',
-      name: 'Yukkuricraft',
-      icon: 'e00bd387745c3eca30f6d589c7c907d5',
-    },
-  ],
+  availableGuilds: [],
 }
 
 const mutations = {

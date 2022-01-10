@@ -2,24 +2,21 @@ package miko.commands
 
 import ackcord._
 import ackcord.data._
-import ackcord.syntax._
-import ackcord.slashcommands._
+import ackcord.interactions._
+import ackcord.interactions.commands._
 import akka.NotUsed
-import akka.stream.scaladsl.{Keep, Source}
+import akka.stream.scaladsl.Source
+import cats.effect.IO
 import miko.settings.GuildSettings
 import miko.util.{Crypto, PGPKeys}
 import miko.voicetext.VoiceTextStreams
-import zio.{RIO, ZIO}
-import zio.blocking.Blocking
 
 import java.text.NumberFormat
 
-class GenericSlashCommands(vtStreams: VoiceTextStreams)(
-    implicit components: MikoCommandComponents,
-    blockingStreamable: Streamable[RIO[Blocking, *]]
-) extends MikoSlashCommandController(components) {
+class GenericSlashCommands(vtStreams: VoiceTextStreams)(implicit components: MikoCommandComponents)
+    extends MikoSlashCommandController(components) {
 
-  val cleanup: Command[GuildCommandInteraction, NotUsed] =
+  val cleanup: SlashCommand[GuildCommandInteraction, NotUsed] =
     GuildCommand
       .andThen(canExecute(CommandCategory.General, _.general.cleanup))
       .withExtra(CommandCategory.General.slashExtra)
@@ -34,12 +31,12 @@ class GenericSlashCommands(vtStreams: VoiceTextStreams)(
         }
       }
 
-  val shiftChannels: Command[GuildCommandInteraction, NotUsed] =
+  val shiftChannels: SlashCommand[GuildCommandInteraction, NotUsed] =
     GuildCommand
       .andThen(canExecute(CommandCategory.General, _.general.shiftChannels))
       .withExtra(CommandCategory.General.slashExtra)
       .command(
-        "shiftChannels",
+        "shift-channels",
         "Manually triggers the process to create new voice channels when existing ones are in use"
       ) { implicit m =>
         sendMessage("Starting channel shift").doAsync { implicit t =>
@@ -52,10 +49,10 @@ class GenericSlashCommands(vtStreams: VoiceTextStreams)(
         }
       }
 
-  val genKeys: Command[GuildCommandInteraction, (String, Option[Boolean])] =
+  val genKeys: SlashCommand[GuildCommandInteraction, (String, Option[Boolean])] =
     GuildCommand
-      .andThen(CommandTransformer.needPermission(Permission.Administrator))
-      .named("genKeys", "Generates new public and private keys to use for encrypting info about this guild")
+      .andThen(DataInteractionTransformer.needPermission(Permission.Administrator))
+      .named("gen-keys", "Generates new public and private keys to use for encrypting info about this guild")
       .withParams(
         string("password", "Password for accessing the logs") ~ bool(
           "force-new",
@@ -67,7 +64,7 @@ class GenericSlashCommands(vtStreams: VoiceTextStreams)(
         val forceNewKey = m.args._2.exists(identity)
 
         sendMessage("Processing...").doAsync { implicit t =>
-          val process = settings.getGuildSettings(m.guild.id).flatMap { guildSettings =>
+          OptFuture.fromFuture(settings.getGuildSettings(m.guild.id).unsafeToFuture()).flatMap { guildSettings =>
             val hasExistingKey = guildSettings.guildEncryption.publicKey.nonEmpty
 
             val allowsAreAdmins = m.textChannel.permissionOverwrites.values.forall {
@@ -88,7 +85,7 @@ class GenericSlashCommands(vtStreams: VoiceTextStreams)(
                   case _ => (false, false)
                 }
 
-                !allow.hasPermissions(Permission.ViewChannel) || (isOwner || hasAdmin)
+                !allow.hasPermissions(Permission.ViewChannel) || isOwner || hasAdmin
             }
 
             val everyoneIsDeny =
@@ -101,27 +98,26 @@ class GenericSlashCommands(vtStreams: VoiceTextStreams)(
             if (canGenKey && allowsAreAdmins && everyoneIsDeny) {
               val PGPKeys(pub, priv) = Crypto.generateKeys(m.guild.name, password)
 
-              ZIO
-                .fromFuture { _ =>
-                  if (priv.length > 2000) {
-                    sendAsyncEmbed(
-                      embeds = Seq(
-                        OutgoingEmbed(
-                          fields = priv
-                            .grouped(1000)
-                            .zipWithIndex
-                            .map(_.swap)
-                            .map(t => EmbedField(t._1.toString, t._2, None))
-                            .toSeq
-                        )
-                      )
-                    ).value
-                  } else {
-                    sendAsyncMessage(priv).value
-                  }
-                }
-                .flatMap { response =>
-                  val msgId = response.get.id
+              val futureResponse = if (priv.length > 2000) {
+                sendAsyncEmbed(
+                  embeds = Seq(
+                    OutgoingEmbed(
+                      fields = priv
+                        .grouped(1000)
+                        .zipWithIndex
+                        .map(_.swap)
+                        .map(t => EmbedField(t._1.toString, t._2, None))
+                        .toSeq
+                    )
+                  )
+                )
+              } else {
+                sendAsyncMessage(priv)
+              }
+
+              futureResponse
+                .semiflatMap { response =>
+                  val msgId = response.id
                   settings
                     .updateGuildSettings(
                       m.guild.id,
@@ -130,37 +126,29 @@ class GenericSlashCommands(vtStreams: VoiceTextStreams)(
                           GuildSettings.GuildEncryption(publicKey = Some(pub), Some(m.textChannel.id), Some(msgId))
                       )
                     )
+                    .unsafeToFuture()
                 }
                 .zip(
-                  ZIO.fromFuture { _ =>
-                    sendAsyncMessage(
-                      """|Keys have been generated. You can now enable saveDestructable.
-                         |You can now delete the message you sent which contains the password.
-                         |If you want, you can also delete the key itself, and store it somewhere more secure.
-                         |You'll then have to supply it yourself when getting logs.""".stripMargin.replace("\n", " ")
-                    ).value
-                  }
+                  sendAsyncMessage(
+                    """|Keys have been generated. You can now enable saveDestructable.
+                       |You can now delete the message you sent which contains the password.
+                       |If you want, you can also delete the key itself, and store it somewhere more secure.
+                       |You'll then have to supply it yourself when getting logs.""".stripMargin.replace("\n", " ")
+                  )
                 )
-                .unit
             } else if (!canGenKey) {
-              ZIO.fromFuture { _ =>
-                sendAsyncMessage("You already have a key. Use `--force-new` to generate a new key.").value
-              }.unit
+              sendAsyncMessage("You already have a key. Use `--force-new` to generate a new key.")
             } else {
-              ZIO.fromFuture { _ =>
-                sendAsyncMessage(
-                  "This channel is not private. Only admins should be able to read the messages in this channel"
-                ).value
-              }.unit
+              sendAsyncMessage(
+                "This channel is not private. Only admins should be able to read the messages in this channel"
+              )
             }
           }
-
-          OptFuture.fromFuture(zioRuntime.unsafeRunToFuture(process))
         }
       }
 
-  val info: Command[ResolvedCommandInteraction, NotUsed] =
-    Command
+  val info: SlashCommand[ResolvedCommandInteraction, NotUsed] =
+    SlashCommand
       .andThen(canExecute(CommandCategory.General, _.general.info))
       .withExtra(CommandCategory.General.slashExtra)
       .command("info", "Get basic info about the bot") { m =>

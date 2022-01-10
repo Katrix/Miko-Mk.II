@@ -76,6 +76,13 @@ object Color {
   final val Failure = Color(255, 0, 0)
   final val Fatal   = Color(16, 16, 16)
 
+  final val Red   = Color(255, 0, 0)
+  final val Green = Color(0, 255, 0)
+
+  final val Created = Green
+  final val Updated = Color(0, 0, 255)
+  final val Deleted = Red
+
   val forVolume: Int => Color =
     gradient(
       50,

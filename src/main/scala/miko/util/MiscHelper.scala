@@ -1,19 +1,19 @@
 package miko.util
 
 import ackcord.CacheSnapshot
-import ackcord.data.{Guild, GuildId, GuildMember, TextGuildChannel}
+import ackcord.data.{GatewayGuild, GuildId, GuildMember, TextGuildChannel}
 import ackcord.syntax._
 import miko.settings.GuildSettings
 
 object MiscHelper {
 
   def canHandlerMember(
-      guild: Guild,
+      guild: GatewayGuild,
       member: GuildMember
   )(implicit c: CacheSnapshot): Boolean =
     guild.memberById(c.botUser.id).exists(_.hasRoleAboveId(guild, member))
 
-  def botSpamChannel(guild: Guild)(implicit guildSettings: GuildSettings): Option[TextGuildChannel] =
+  def botSpamChannel(guild: GatewayGuild)(implicit guildSettings: GuildSettings): Option[TextGuildChannel] =
     guildSettings.channels.botSpamChannel.flatMap(guild.textChannelById)
 
   def botSpamChannel(guildId: GuildId)(
@@ -22,7 +22,7 @@ object MiscHelper {
   ): Option[TextGuildChannel] =
     guildSettings.channels.botSpamChannel.flatMap(_.resolve(guildId))
 
-  def staffChannel(guild: Guild)(implicit guildSettings: GuildSettings): Option[TextGuildChannel] =
+  def staffChannel(guild: GatewayGuild)(implicit guildSettings: GuildSettings): Option[TextGuildChannel] =
     guildSettings.channels.staffChannel.flatMap(guild.textChannelById)
 
   def staffChannel(guildId: GuildId)(

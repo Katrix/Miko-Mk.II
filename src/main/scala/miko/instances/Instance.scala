@@ -1,4 +1,4 @@
-package miko.slaves
+package miko.instances
 
 import ackcord.Cache
 import ackcord.data.GuildId
@@ -9,11 +9,11 @@ import akka.http.scaladsl.model.Uri
 import scala.collection.mutable
 import scala.concurrent.duration._
 
-abstract class AbstractSlave(
-    ctx: ActorContext[AbstractSlave.Command],
-    timers: TimerScheduler[AbstractSlave.Command]
-) extends AbstractBehavior[AbstractSlave.Command](ctx) {
-  import AbstractSlave._
+abstract class Instance(
+    ctx: ActorContext[Instance.Command],
+    timers: TimerScheduler[Instance.Command]
+) extends AbstractBehavior[Instance.Command](ctx) {
+  import Instance._
 
   implicit val system: ActorSystem[Nothing] = ctx.system
 
@@ -22,41 +22,38 @@ abstract class AbstractSlave(
   protected val reservationIdToGuildId = mutable.HashMap.empty[Long, GuildId]
 
   protected val users        = mutable.HashSet.empty[GuildId]
-  protected val reservations = mutable.HashMap.empty[GuildId, ActorRef[SlaveHandler.ReservationReply]]
+  protected val reservations = mutable.HashMap.empty[GuildId, ActorRef[InstanceHandler.ReservationReply]]
 
-  def stopSlave(): Unit
+  def stopInstance(): Unit
 
   def userAdded(): Unit
 
   def userRemoved(): Unit
 
-  def bestStatus: SlaveNegotiator.ReservationStatus
+  def bestStatus: InstanceNegotiator.ReservationStatus
 
   override def onMessage(msg: Command): Behavior[Command] = {
     var shouldStop = false
 
     msg match {
       case Shutdown =>
-        stopSlave()
+        stopInstance()
 
       case StopNow =>
         shouldStop = true
 
       case RequestReservation(guildId, reservationId, replyTo, negotiator) =>
-        if (users.contains(guildId) || reservations.contains(guildId)) {
-          negotiator ! SlaveNegotiator.SlaveReservationStatus(
-            context.self,
-            SlaveNegotiator.ReservationStatus.AlreadyServingGuild
-          )
+        val status = if (users.contains(guildId) || reservations.contains(guildId)) {
+          InstanceNegotiator.ReservationStatus.AlreadyServingGuild
         } else {
           reservationIdToGuildId.put(reservationId, guildId)
           reservations.put(guildId, replyTo)
 
-          val status =
-            if (users.nonEmpty) bestStatus
-            else SlaveNegotiator.ReservationStatus.NotLoggedIn
-          negotiator ! SlaveNegotiator.SlaveReservationStatus(context.self, status)
+          if (users.nonEmpty) bestStatus
+          else InstanceNegotiator.ReservationStatus.NotLoggedIn
         }
+
+        negotiator ! InstanceNegotiator.InstanceReservationStatus(context.self, status)
 
       case ReservationHandled(reservationId) =>
         reservations.remove(reservationIdToGuildId(reservationId))
@@ -68,7 +65,7 @@ abstract class AbstractSlave(
           users.add(guildId)
 
           userAdded()
-          replyTo ! SlaveHandler.SendLifetime(reservationId, ctx.self, cache)
+          replyTo ! InstanceHandler.SendLifetime(reservationId, ctx.self, cache)
           timers.startSingleTimer(reservationId, GuildUserDone(guildId), 1.minute)
         }
 
@@ -88,23 +85,23 @@ abstract class AbstractSlave(
     if (shouldStop) Behaviors.stopped else Behaviors.same
   }
 }
-object AbstractSlave {
+object Instance {
 
-  def slave(wsUri: Uri, token: String): Behavior[Command] =
-    Behaviors.setup(ctx => Behaviors.withTimers(timers => new Slave(ctx, timers, wsUri, token)))
+  def secondary(wsUri: Uri, token: String): Behavior[Command] =
+    Behaviors.setup(ctx => Behaviors.withTimers(timers => new Secondary(ctx, timers, wsUri, token)))
 
-  def master(cache: Cache): Behavior[Command] =
-    Behaviors.setup(ctx => Behaviors.withTimers(timers => new Master(ctx, timers, cache)))
+  def primary(cache: Cache): Behavior[Command] =
+    Behaviors.setup(ctx => Behaviors.withTimers(timers => new Primary(ctx, timers, cache)))
 
   sealed trait Command
-  case object Shutdown                extends Command
-  private[slaves] case object StopNow extends Command
+  case object Shutdown                   extends Command
+  private[instances] case object StopNow extends Command
 
   case class RequestReservation(
       guildId: GuildId,
       reservationId: Long,
-      replyTo: ActorRef[SlaveHandler.ReservationReply],
-      negotiator: ActorRef[SlaveNegotiator.Command]
+      replyTo: ActorRef[InstanceHandler.ReservationReply],
+      negotiator: ActorRef[InstanceNegotiator.Command]
   ) extends Command
 
   private case class GuildUserDone(guildId: GuildId) extends Command

@@ -1,72 +1,71 @@
 package miko.music
 
-import java.util.concurrent.ThreadLocalRandom
-
-import ackcord.data.{GuildId, UserId, VoiceGuildChannelId}
+import ackcord.data.raw.RawMessage
+import ackcord.data.{ActionRow, GuildId, NormalVoiceGuildChannelId, OutgoingEmbed, UserId}
 import ackcord.gateway.{GatewayMessage, VoiceStateUpdate, VoiceStateUpdateData}
 import ackcord.lavaplayer.LavaplayerHandler
 import ackcord.requests.Requests
-import ackcord.{Cache, CacheSnapshot}
+import ackcord.{Cache, CacheSnapshot, OptFuture}
 import akka.actor.typed._
 import akka.actor.typed.scaladsl._
 import akka.stream.scaladsl.Source
+import cats.effect.unsafe.IORuntime
 import com.sedmelluq.discord.lavaplayer.player.AudioPlayer
+import miko.instances.{Instance, InstanceHandler}
 import miko.settings.SettingsAccess
-import miko.slaves.{AbstractSlave, SlaveHandler}
 import miko.web.WebEvents
-import zio.ZEnv
+
+import java.util.concurrent.ThreadLocalRandom
 
 object ChannelMusicHandler {
 
-  case class Parameters(
+  private case class Parameters(
       context: ActorContext[Command],
       stash: StashBuffer[Command],
       player: AudioPlayer,
       guildId: GuildId,
-      firstVChannelId: VoiceGuildChannelId,
+      firstVChannelId: NormalVoiceGuildChannelId,
       topCache: Cache,
       loader: ActorRef[AudioItemLoader.Command],
-      slaveHandler: ActorRef[SlaveHandler.Command],
       handler: ActorRef[GuildMusicHandler.Command],
       initialCacheSnapshot: CacheSnapshot,
       reservationId: Long
   )
 
-  case class State(
-      musicReady: Boolean = false,
-      gotSlaveInfo: Option[GotSlaveInfo] = None,
-      slaveUserId: Option[UserId] = None
+  private case class State(
+      gotInstanceInfo: Option[GotInstanceInfo] = None,
+      instanceUserId: Option[UserId] = None
   )
 
-  case class GotSlaveInfo(
-      slaveCache: Cache,
-      awaitingLifetime: ActorRef[AbstractSlave.SetLifetime],
+  private case class GotInstanceInfo(
+      instanceCache: Cache,
+      awaitingLifetime: ActorRef[Instance.SetLifetime],
       lavaplayerHandler: ActorRef[LavaplayerHandler.Command]
   )
 
   def apply(
       player: AudioPlayer,
       guildId: GuildId,
-      firstVChannelId: VoiceGuildChannelId,
+      firstVChannelId: NormalVoiceGuildChannelId,
       topCache: Cache,
       loader: ActorRef[AudioItemLoader.Command],
-      slaveHandler: ActorRef[SlaveHandler.Command],
+      instanceHandler: ActorRef[InstanceHandler.Command],
       handler: ActorRef[GuildMusicHandler.Command],
       initialCacheSnapshot: CacheSnapshot
   )(
       implicit requests: Requests,
       webEvents: WebEvents,
       settings: SettingsAccess,
-      runtime: zio.Runtime[ZEnv],
+      IORuntime: IORuntime
   ): Behavior[Command] = Behaviors.setup { ctx =>
     Behaviors.withStash(32) { stash =>
       val reservationId = ThreadLocalRandom.current().nextLong()
-      slaveHandler ! SlaveHandler.ReserveSlave(
+      instanceHandler ! InstanceHandler.ReserveInstance(
         reservationId,
         guildId,
         ctx.messageAdapter {
-          case SlaveHandler.ReservationFailed(_)                 => FailedToGetSlave
-          case SlaveHandler.SendLifetime(_, replyTo, slaveCache) => GotSlave(replyTo, slaveCache)
+          case InstanceHandler.ReservationFailed(_)                    => FailedToGetInstance
+          case InstanceHandler.SendLifetime(_, replyTo, instanceCache) => GotInstance(replyTo, instanceCache)
         }
       )
 
@@ -79,7 +78,6 @@ object ChannelMusicHandler {
           firstVChannelId,
           topCache,
           loader,
-          slaveHandler,
           handler,
           initialCacheSnapshot,
           reservationId
@@ -96,15 +94,14 @@ object ChannelMusicHandler {
       implicit requests: Requests,
       webEvents: WebEvents,
       settings: SettingsAccess,
-      runtime: zio.Runtime[ZEnv],
+      IORuntime: IORuntime
   ): Behavior[Command] = {
     import parameters._
 
     def tryStart(state: State) = state match {
       case State(
-          true,
-          Some(GotSlaveInfo(slaveCache, awaitingLifetime, lavaplayerHandler)),
-          Some(slaveUserId)
+          Some(GotInstanceInfo(instanceCache, awaitingLifetime, lavaplayerHandler)),
+          Some(instanceUserId)
           ) =>
         val controller = context.spawn(
           ChannelMusicController(
@@ -113,7 +110,7 @@ object ChannelMusicHandler {
             firstVChannelId,
             initialCacheSnapshot,
             topCache,
-            slaveUserId,
+            instanceUserId,
             loader,
             handler
           ),
@@ -121,17 +118,16 @@ object ChannelMusicHandler {
         )
         context.watchWith(controller, ControllerDied)
 
-        awaitingLifetime ! AbstractSlave.SetLifetime(reservationId, controller)
+        awaitingLifetime ! Instance.SetLifetime(reservationId, controller)
         lavaplayerHandler ! LavaplayerHandler.SetPlaying(true)
 
-        stash.unstashAll(running(parameters, controller, lavaplayerHandler, slaveCache))
+        stash.unstashAll(running(parameters, controller, lavaplayerHandler, instanceCache))
       case _ => initializing(parameters, state)
     }
 
     Behaviors.receiveMessage {
-      case GotSlave(replyTo, slaveCache) =>
-        val lavaplayerHandler =
-          context.spawn(LavaplayerHandler(player, guildId, slaveCache), "LavaplayerHandler")
+      case GotInstance(replyTo, instanceCache) =>
+        val lavaplayerHandler = context.spawn(LavaplayerHandler(player, guildId, instanceCache), "LavaplayerHandler")
         lavaplayerHandler ! LavaplayerHandler.ConnectVoiceChannel(
           firstVChannelId,
           force = false,
@@ -143,19 +139,19 @@ object ChannelMusicHandler {
         )
         context.watchWith(lavaplayerHandler, LavaplayerDied)
 
-        tryStart(state.copy(gotSlaveInfo = Some(GotSlaveInfo(slaveCache, replyTo, lavaplayerHandler))))
+        tryStart(state.copy(gotInstanceInfo = Some(GotInstanceInfo(instanceCache, replyTo, lavaplayerHandler))))
 
       case MusicReady(userId) =>
-        tryStart(state.copy(musicReady = true, slaveUserId = Some(userId)))
+        tryStart(state.copy(instanceUserId = Some(userId)))
 
       case AlreadyConnected =>
         player.destroy()
         handler ! GuildMusicHandler.FailedToStart(GuildMusicHandler.AlreadyConnected, firstVChannelId)
         Behaviors.stopped
 
-      case FailedToGetSlave =>
+      case FailedToGetInstance =>
         player.destroy()
-        handler ! GuildMusicHandler.FailedToStart(GuildMusicHandler.NoSlaves, firstVChannelId)
+        handler ! GuildMusicHandler.FailedToStart(GuildMusicHandler.NoInstances, firstVChannelId)
         Behaviors.stopped
 
       case Shutdown =>
@@ -171,7 +167,7 @@ object ChannelMusicHandler {
     }
   }
 
-  private def sendLeaving(parameters: Parameters, slaveCache: Cache): Unit = {
+  private def sendLeaving(parameters: Parameters, instanceCache: Cache): Unit = {
     implicit val system: ActorSystem[Nothing] = parameters.context.system
 
     Source
@@ -179,34 +175,34 @@ object ChannelMusicHandler {
         VoiceStateUpdate(VoiceStateUpdateData(parameters.guildId, None, selfMute = false, selfDeaf = false))
           .asInstanceOf[GatewayMessage[Any]]
       )
-      .runWith(slaveCache.sendGatewayPublish)
+      .runWith(instanceCache.toGatewayPublish)
   }
 
   def running(
       parameters: ChannelMusicHandler.Parameters,
       controller: ActorRef[ChannelMusicController.Command],
       lavaplayerHandler: ActorRef[LavaplayerHandler.Command],
-      slaveCache: Cache
+      instanceCache: Cache
   ): Behavior[Command] = Behaviors.receiveMessagePartial {
     case Shutdown =>
-      sendLeaving(parameters, slaveCache)
+      sendLeaving(parameters, instanceCache)
       lavaplayerHandler ! LavaplayerHandler.Shutdown
-      controller ! ChannelMusicController.Shutdown
+      controller ! ChannelMusicController.StartShutdown
 
       deathwatch(parameters.player, lavaplayerDead = false, controllerDead = false)
 
-    case ChannelMusicCommandWrapper(command, info) =>
-      controller ! ChannelMusicController.ChannelMusicCommandWrapper(command, info)
+    case ChannelMusicCommandWrapper(command, sendEmbed, info) =>
+      controller ! ChannelMusicController.ChannelMusicCommandWrapper(command, sendEmbed, info)
       Behaviors.same
 
     case ControllerDied =>
-      sendLeaving(parameters, slaveCache)
+      sendLeaving(parameters, instanceCache)
       lavaplayerHandler ! LavaplayerHandler.Shutdown
       deathwatch(parameters.player, lavaplayerDead = false, controllerDead = true)
 
     case LavaplayerDied =>
-      sendLeaving(parameters, slaveCache)
-      controller ! ChannelMusicController.Shutdown
+      sendLeaving(parameters, instanceCache)
+      controller ! ChannelMusicController.StartShutdown
       parameters.player.destroy()
       deathwatch(parameters.player, lavaplayerDead = true, controllerDead = false)
   }
@@ -224,15 +220,18 @@ object ChannelMusicHandler {
 
   sealed trait Command
   case object Shutdown extends Command
-  case class ChannelMusicCommandWrapper(command: GuildMusicHandler.MusicCommand, info: GuildMusicHandler.MusicCmdInfo)
-      extends Command
+  case class ChannelMusicCommandWrapper(
+      command: GuildMusicHandler.MusicCommand,
+      sendEmbed: (Seq[OutgoingEmbed], Seq[ActionRow]) => OptFuture[RawMessage],
+      info: GuildMusicHandler.MusicCmdInfo
+  ) extends Command
 
   case object LavaplayerDied extends Command
   case object ControllerDied extends Command
 
-  private case class GotSlave(replyTo: ActorRef[AbstractSlave.SetLifetime], slaveCache: Cache) extends Command
-  private case class MusicReady(slaveUserId: UserId)                                           extends Command
+  private case class GotInstance(replyTo: ActorRef[Instance.SetLifetime], instanceCache: Cache) extends Command
+  private case class MusicReady(instanceUserId: UserId)                                         extends Command
 
-  private case object FailedToGetSlave extends Command
-  private case object AlreadyConnected extends Command
+  private case object FailedToGetInstance extends Command
+  private case object AlreadyConnected    extends Command
 }

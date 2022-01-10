@@ -1,16 +1,14 @@
 package miko.web.controllers
 
-import java.time.{Instant, OffsetDateTime}
-import java.util.UUID
-
 import ackcord.data._
 import ackcord.requests.{GetCurrentUser, OAuth, RequestResponse}
 import ackcord.util.GuildRouter
 import akka.http.scaladsl.model.headers.OAuth2BearerToken
 import akka.stream.scaladsl.{Flow, GraphDSL, Sink, Source}
 import akka.stream.{FlowShape, SourceShape}
-import akka.util.Timeout
 import cats.data.EitherT
+import cats.effect.IO
+import cats.effect.unsafe.IORuntime
 import controllers.AssetsFinder
 import io.circe.syntax._
 import io.circe.{Json, parser}
@@ -23,27 +21,30 @@ import miko.settings.{PublicGuildSettings, SettingsAccess}
 import miko.web.WebEvents
 import miko.web.controllers.MikoBaseController.HasMaybeAuthRequest
 import miko.web.models.GuildViewInfo
+import play.api.{Environment, Mode}
 import play.api.http.websocket.TextMessage
 import play.api.mvc._
 import play.filters.csrf.CSRF
 import play.twirl.api.{Html, StringInterpolation}
 import views.html.helper.CSPNonce
-import zio.Task
 
+import java.time.{Instant, OffsetDateTime}
+import java.util.UUID
 import scala.annotation.unused
 import scala.concurrent.Future
-import scala.concurrent.duration._
 import scala.reflect.ClassTag
 
 class WebController(
     assetsFinder: AssetsFinder,
-    helpCommand: MikoHelpCommand
+    helpCommand: MikoHelpCommand,
+    environment: Environment
 )(
     implicit components: MikoControllerComponents,
     webEvents: WebEvents,
     mikoConfig: MikoConfig,
     settings: SettingsAccess,
-    db: DBAccess[Task]
+    db: DBAccess[IO],
+    IORuntime: IORuntime
 ) extends AbstractMikoController(components) { outer =>
 
   private val self = routes.WebController
@@ -53,6 +54,15 @@ class WebController(
       CSRF.getToken.fold(Html(""))(token => html"<script ${CSPNonce.attr} >var csrf = '${token.value}'</script>")
     val authPart =
       request.maybeInfo.fold(Html(""))(_ => html"<script ${CSPNonce.attr}>var isAuthenticated = true</script>")
+    val clientIdPart =
+      html"""<script ${CSPNonce.attr}>
+               window.EXTERNAL_CONFIG = {
+                 clientId: '${mikoConfig.clientId}',
+                 backendUrl: '${self.index.absoluteURL()}',
+                 wsMusicBackendUrl: '${"TODO"/*self.musicWebsocket.absoluteURL()*/}',
+                 production: ${environment.mode == Mode.Prod}
+               }
+             </script>"""
 
     html"""
           <!doctype html>
@@ -75,6 +85,7 @@ class WebController(
           	<title>Miko Mk.II</title>
             $tokenPart
             $authPart
+            $clientIdPart
           </head>
           <body>
           <div id="app"></div>
@@ -95,7 +106,7 @@ class WebController(
   }
 
   def logout: Action[AnyContent] = MaybeAuthenticatedAction {
-    Redirect(self.index()).withNewSession
+    Redirect(self.index).withNewSession
   }
 
   def codeGrant: Action[AnyContent] = Action { implicit request =>
@@ -104,7 +115,7 @@ class WebController(
       mikoConfig.clientId,
       Seq(OAuth.Scope.Identify),
       state.toString,
-      self.authenticateOAuth(None, None).absoluteURL,
+      self.authenticateOAuth(None, None).absoluteURL(),
       OAuth.PromptType.Consent
     )
     Redirect(uri.toString).withSession("State" -> state.toString)
@@ -123,7 +134,7 @@ class WebController(
           mikoConfig.clientSecret,
           OAuth.GrantType.AuthorizationCode,
           code,
-          self.authenticateOAuth(None, None).absoluteURL,
+          self.authenticateOAuth(None, None).absoluteURL(),
           Seq(OAuth.Scope.Identify)
         )
         response <- requests
@@ -131,7 +142,7 @@ class WebController(
           .singleFuture(GetCurrentUser)
       } yield response match {
         case response: RequestResponse[User] =>
-          Redirect(self.index()).withSession(
+          Redirect(self.index).withSession(
             "userId"       -> response.data.id.asString,
             "accessToken"  -> token.accessToken,
             "expiresIn"    -> token.expiresIn.toString,
@@ -145,6 +156,9 @@ class WebController(
   }
 
   def getAvailibleGuils: Action[AnyContent] = AuthenticatedAction { request =>
+    println(request.info.cache.guildMap.map(_._2.members))
+    println(request.info.cache.guildMap.map(_._2.members.contains(request.info.userId)))
+    println(request.info.userId)
     Ok(Json.obj("guilds" := request.info.cache.guildMap.collect {
       case (id, guild) if guild.members.contains(request.info.userId) =>
         Json.obj(
@@ -179,15 +193,12 @@ class WebController(
   }
 
   def getSettings(guildId: String): Action[AnyContent] = AdminGuildAction(guildId).async { request =>
-    zio.Runtime.default
-      .unsafeRunToFuture(settings.getGuildSettings(request.info.guildId).map(s => Ok(s.asPublic.asJson)))
+    settings.getGuildSettings(request.info.guildId).map(s => Ok(s.asPublic.asJson)).unsafeToFuture()
   }
 
   def updateSettings(guildId: String): Action[PublicGuildSettings] =
     AdminGuildAction(guildId).async(parseCirce.decodeJson[PublicGuildSettings]) { request =>
-      zio.Runtime.default
-        .unsafeRunToFuture(settings.updateGuildSettings(GuildId(guildId), request.body.toAll(_)))
-        .map(_ => NoContent)
+      settings.updateGuildSettings(GuildId(guildId), request.body.toAll(_)).as(NoContent).unsafeToFuture()
     }
 
   private def createFakeMessage(info: GuildViewInfo) = {
@@ -216,7 +227,7 @@ class WebController(
         mentions = Nil,
         mentionRoles = Nil,
         mentionChannels = Nil,
-        attachment = Nil,
+        attachments = Nil,
         embeds = Nil,
         reactions = Nil,
         nonce = None,
@@ -227,7 +238,12 @@ class WebController(
         messageReference = None,
         flags = None,
         stickers = None,
-        referencedMessage = None
+        referencedMessage = None,
+        applicationId = None,
+        stickerItems = None,
+        interaction = None,
+        components = Nil,
+        threadId = None
       )
     }
   }
@@ -259,7 +275,7 @@ class WebController(
         .map(_.collect { case (canExecute, info, category) if canExecute => (info, category) }.groupMap(_._2)(_._1))
     }
 
-    zioRuntime.unsafeRunToFuture(settings.getGuildSettings(info.guildId)).zip(commandData).map {
+    settings.getGuildSettings(info.guildId).unsafeToFuture().zip(commandData).map {
       case (settings, commandData) =>
         Ok(
           Json.obj(
@@ -293,8 +309,7 @@ class WebController(
         .flatMapF(authedGuildRefiner(guildIdStr).refineResult)
 
     eitherRequest.map { guildRequest =>
-      val guildId                   = guildRequest.info.guild.id
-      implicit val timeout: Timeout = Timeout(10.seconds)
+      val guildId = guildRequest.info.guild.id
 
       val flowGraph = GraphDSL.create() { implicit builder =>
         import GraphDSL.Implicits._
@@ -327,29 +342,29 @@ class WebController(
               case ClientMessage.SetPaused(paused) =>
                 GuildRouter.SendToGuildActor(
                   guildId,
-                  GuildMusicHandler.GuildMusicCommandWrapper(GuildMusicHandler.MusicCommand.SetPaused(paused), ???)
+                  GuildMusicHandler.GuildMusicCommandWrapper(GuildMusicHandler.MusicCommand.SetPaused(paused), ???, ???)
                 )
               case ClientMessage.UpdateVolume(volume, defVolume) =>
                 GuildRouter.SendToGuildActor(
                   guildId,
                   GuildMusicHandler
-                    .GuildMusicCommandWrapper(GuildMusicHandler.MusicCommand.VolumeBoth(volume, defVolume), ???)
+                    .GuildMusicCommandWrapper(GuildMusicHandler.MusicCommand.VolumeBoth(volume, defVolume), ???, ???)
                 )
               case ClientMessage.SetPosition(position) =>
                 GuildRouter.SendToGuildActor(
                   guildId,
                   GuildMusicHandler
-                    .GuildMusicCommandWrapper(GuildMusicHandler.MusicCommand.Seek(position, useOffset = false), ???)
+                    .GuildMusicCommandWrapper(GuildMusicHandler.MusicCommand.Seek(position, useOffset = false), ???, ???)
                 )
               case ClientMessage.SetTrackPlaying(idx, position) =>
                 GuildRouter.SendToGuildActor(
                   guildId,
-                  GuildMusicHandler.GuildMusicCommandWrapper(???, ???)
+                  GuildMusicHandler.GuildMusicCommandWrapper(???, ???, ???)
                 )
               case ClientMessage.SetPlaylist(playlist) =>
                 GuildRouter.SendToGuildActor(
                   guildId,
-                  GuildMusicHandler.GuildMusicCommandWrapper(???, ???)
+                  GuildMusicHandler.GuildMusicCommandWrapper(???, ???, ???)
                 )
             }
             .to(Sink.foreach(???))

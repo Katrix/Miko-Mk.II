@@ -1,22 +1,22 @@
 package miko.music
 
-import java.util.concurrent.ThreadLocalRandom
-
-import ackcord.data.{Guild, GuildId, OutgoingEmbed, TextGuildChannel, UserId, VoiceGuildChannelId}
+import ackcord.data.raw.RawMessage
+import ackcord.data.{ActionRow, GatewayGuild, GuildId, NormalVoiceGuildChannelId, OutgoingEmbed, TextGuildChannel, UserId}
 import ackcord.syntax._
-import ackcord.{Cache, CacheSnapshot, Requests}
+import ackcord.{Cache, CacheSnapshot, OptFuture, Requests}
 import akka.actor.typed._
 import akka.actor.typed.scaladsl._
+import cats.effect.unsafe.IORuntime
 import com.sedmelluq.discord.lavaplayer.player.AudioPlayerManager
+import miko.instances.InstanceHandler
 import miko.services._
 import miko.settings.SettingsAccess
-import miko.slaves.SlaveHandler
 import miko.util.Color
 import miko.voicetext.VoiceTextStreams
 import miko.web.WebEvents
 import miko.web.WebEvents.ServerEventWrapper
-import zio.ZEnv
 
+import java.util.concurrent.ThreadLocalRandom
 import scala.collection.mutable
 import scala.concurrent.Future
 
@@ -25,48 +25,44 @@ class GuildMusicHandler(
     guildId: GuildId,
     playerManager: AudioPlayerManager,
     topCache: Cache,
-    slaveHandler: ActorRef[SlaveHandler.Command],
+    instanceHandler: ActorRef[InstanceHandler.Command],
     audioItemLoader: ActorRef[AudioItemLoader.Command]
 )(
     implicit requests: Requests,
     webEvents: WebEvents,
     settings: SettingsAccess,
-    runtime: zio.Runtime[ZEnv]
+    IORuntime: IORuntime
 ) extends AbstractBehavior[GuildMusicHandler.Command](ctx) {
   import GuildMusicHandler._
   import ctx.executionContext
 
   val connectedPlayers =
-    mutable.HashMap.empty[VoiceGuildChannelId, (ActorRef[ChannelMusicHandler.Command], MusicCmdInfo)]
-  val channelIdById = mutable.HashMap.empty[Long, VoiceGuildChannelId]
-  val idByChannelId = mutable.HashMap.empty[VoiceGuildChannelId, Long]
+    mutable.HashMap.empty[NormalVoiceGuildChannelId, (ActorRef[ChannelMusicHandler.Command], MusicCmdInfo)]
+  val channelIdById = mutable.HashMap.empty[Long, NormalVoiceGuildChannelId]
+  val idByChannelId = mutable.HashMap.empty[NormalVoiceGuildChannelId, Long]
+
+  var lastCacheSnapshot: CacheSnapshot = _
 
   def textChannel(
-      vChannelId: VoiceGuildChannelId,
+      vChannelId: NormalVoiceGuildChannelId,
       current: Option[TextGuildChannel]
   ): Future[Option[TextGuildChannel]] = {
-    runtime.unsafeRunToFuture(
-      settings.getGuildSettings(guildId).map { implicit settings =>
-        for {
-          guild <- guildId.resolve(lastCacheSnapshot)
-          ch <- guild
-            .voiceChannelById(vChannelId)
-            .flatMap(
-              VoiceTextStreams
-                .getTextChannel(_, guild)
-                .headOption
-            )
-            .orElse(current)
-        } yield ch
-      }
-    )
+    settings.getGuildSettings(guildId).map { implicit settings =>
+      for {
+        guild <- guildId.resolve(lastCacheSnapshot)
+        ch <- guild
+          .voiceChannelById(vChannelId)
+          .flatMap(VoiceTextStreams.getTextChannel(_, guild).headOption)
+          .orElse(current)
+      } yield ch
+    }.unsafeToFuture()
   }
 
-  def createHandler(vChannelId: VoiceGuildChannelId): ActorRef[ChannelMusicHandler.Command] = {
+  def createHandler(vChannelId: NormalVoiceGuildChannelId): ActorRef[ChannelMusicHandler.Command] = {
     import context.executionContext
 
     val player = playerManager.createPlayer()
-    runtime.unsafeRunToFuture(settings.getGuildSettings(guildId)).foreach { settings =>
+    settings.getGuildSettings(guildId).unsafeToFuture().foreach { settings =>
       player.setVolume(settings.music.defaultMusicVolume)
     }
     val id = ThreadLocalRandom.current().nextLong()
@@ -78,7 +74,7 @@ class GuildMusicHandler(
         vChannelId,
         topCache,
         audioItemLoader,
-        slaveHandler,
+        instanceHandler,
         context.self,
         lastCacheSnapshot
       )
@@ -91,10 +87,8 @@ class GuildMusicHandler(
     handler
   }
 
-  var lastCacheSnapshot: CacheSnapshot = _
-
   def webEventApplicableUsers: Set[UserId] =
-    guildId.resolve(lastCacheSnapshot).toSet.flatMap((g: Guild) => g.members.keySet)
+    guildId.resolve(lastCacheSnapshot).toSet.flatMap((guild: GatewayGuild) => guild.members.keySet)
 
   def sendServerEvent(event: ServerMessage): Unit =
     webEvents.publishSingle(ServerEventWrapper(webEventApplicableUsers, guildId, event))
@@ -139,34 +133,26 @@ class GuildMusicHandler(
 
       Behaviors.same
 
-    case SetDefaultVolume(volume, tChannel, cacheSnapshot) =>
+    case SetDefaultVolume(volume, sendEmbed, tChannel, cacheSnapshot) =>
       cacheSnapshot.foreach(lastCacheSnapshot = _)
 
-      sendServerEvent(ServerMessage.UpdateVolume(???, volume))
-      runtime.unsafeRunToFuture(
-        this.settings.updateGuildSettings(guildId, gs => gs.copy(music = gs.music.copy(defaultMusicVolume = volume)))
-      )
+      //sendServerEvent(ServerMessage.UpdateVolume(???, volume))
+      this.settings.updateGuildSettings(guildId, gs => gs.copy(music = gs.music.copy(defaultMusicVolume = volume))).unsafeRunAndForget()
 
-      tChannel.foreach { chan =>
-        requests.singleIgnore(
-          chan.sendMessage(
-            embed = Some(
-              OutgoingEmbed(
-                description = Some(s"Set default volume to $volume%"),
-                color = Some(Color.forVolume(volume))
-              )
-            )
-          )
+      sendEmbed(
+        OutgoingEmbed(
+          description = Some(s"Set default volume to $volume%"),
+          color = Some(Color.forVolume(volume))
         )
-      }
+      )
 
       Behaviors.same
 
-    case GuildMusicCommandWrapper(queue: MusicCommand.Queue, info) =>
+    case GuildMusicCommandWrapper(queue: MusicCommand.Queue, sendEmbed, info) =>
       updateMusicInfo(info)
 
       val handler = connectedPlayers.getOrElseUpdate(info.vChannelId, (createHandler(info.vChannelId), info))._1
-      handler ! ChannelMusicHandler.ChannelMusicCommandWrapper(queue, info)
+      handler ! ChannelMusicHandler.ChannelMusicCommandWrapper(queue, sendEmbed, info)
 
       Behaviors.same
 
@@ -175,24 +161,24 @@ class GuildMusicHandler(
         optChannel.foreach { channel =>
           val message = reason match {
             case GuildMusicHandler.AlreadyConnected => "An error occurred"
-            case GuildMusicHandler.NoSlaves         => "Not enough slaves to connect"
+            case GuildMusicHandler.NoInstances      => "Not enough instances to connect"
           }
 
           requests.singleIgnore(
-            channel.sendMessage(embed = Some(OutgoingEmbed(description = Some(message), color = Some(Color.Failure))))
+            channel.sendMessage(embeds = Seq(OutgoingEmbed(description = Some(message), color = Some(Color.Failure))))
           )
         }
       }
 
       Behaviors.same
 
-    case GuildMusicCommandWrapper(command, info) =>
+    case GuildMusicCommandWrapper(command, sendEmbed, info) =>
       updateMusicInfo(info)
 
       connectedPlayers
         .get(info.vChannelId)
         .map(_._1)
-        .foreach(_ ! ChannelMusicHandler.ChannelMusicCommandWrapper(command, info))
+        .foreach(_ ! ChannelMusicHandler.ChannelMusicCommandWrapper(command, sendEmbed, info))
 
       Behaviors.same
   }
@@ -203,37 +189,47 @@ object GuildMusicHandler {
       guildId: GuildId,
       playerManager: AudioPlayerManager,
       topCache: Cache,
-      slaveHandler: ActorRef[SlaveHandler.Command],
+      instanceHandler: ActorRef[InstanceHandler.Command],
       audioItemLoader: ActorRef[AudioItemLoader.Command]
   )(
       implicit requests: Requests,
       webEvents: WebEvents,
       settings: SettingsAccess,
-      runtime: zio.Runtime[ZEnv]
+      IORuntime: IORuntime
   ): Behavior[Command] =
-    Behaviors.setup(ctx => new GuildMusicHandler(ctx, guildId, playerManager, topCache, slaveHandler, audioItemLoader))
+    Behaviors.setup(
+      ctx => new GuildMusicHandler(ctx, guildId, playerManager, topCache, instanceHandler, audioItemLoader)
+    )
 
   case class MusicCmdInfo(
       tChannel: Option[TextGuildChannel],
-      vChannelId: VoiceGuildChannelId,
+      vChannelId: NormalVoiceGuildChannelId,
       cacheSnapshot: Option[CacheSnapshot]
   )
 
   sealed trait Command
-  case object Shutdown                                                       extends Command
-  case class PlayerMoved(from: VoiceGuildChannelId, to: VoiceGuildChannelId) extends Command
-  private case class ChannelStopping(id: Long)                               extends Command
+  case object Shutdown                                                                   extends Command
+  case class PlayerMoved(from: NormalVoiceGuildChannelId, to: NormalVoiceGuildChannelId) extends Command
+  private case class ChannelStopping(id: Long)                                           extends Command
 
   sealed trait FailedToStartReason
   case object AlreadyConnected extends FailedToStartReason
-  case object NoSlaves         extends FailedToStartReason
+  case object NoInstances      extends FailedToStartReason
 
-  case class FailedToStart(reason: FailedToStartReason, vChannelId: VoiceGuildChannelId) extends Command
+  case class FailedToStart(reason: FailedToStartReason, vChannelId: NormalVoiceGuildChannelId) extends Command
 
-  case class SetDefaultVolume(volume: Int, tChannel: Option[TextGuildChannel], cacheSnapshot: Option[CacheSnapshot])
-      extends Command
+  case class SetDefaultVolume(
+      volume: Int,
+      sendEmbed: OutgoingEmbed => OptFuture[RawMessage],
+      tChannel: Option[TextGuildChannel],
+      cacheSnapshot: Option[CacheSnapshot]
+  ) extends Command
 
-  case class GuildMusicCommandWrapper(command: MusicCommand, info: MusicCmdInfo) extends Command
+  case class GuildMusicCommandWrapper(
+      command: MusicCommand,
+      sendEmbed: (Seq[OutgoingEmbed], Seq[ActionRow]) => OptFuture[RawMessage],
+      info: MusicCmdInfo
+  ) extends Command
 
   sealed trait MusicCommand
   object MusicCommand {
@@ -244,6 +240,7 @@ object GuildMusicHandler {
     case class VolumeBoth(volume: Int, defVolume: Int)  extends MusicCommand
     case object Stop                                    extends MusicCommand
     case object NowPlaying                              extends MusicCommand
+    case object Playlist                                extends MusicCommand
     case object Next                                    extends MusicCommand
     case object Prev                                    extends MusicCommand
     case object Clear                                   extends MusicCommand

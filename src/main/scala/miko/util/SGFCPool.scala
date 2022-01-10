@@ -34,7 +34,7 @@ class SGFCPool[Command, OutsideCommand, Res](
       case Msg(replyTo, msg) =>
         implicit val timeout: Timeout = Timeout(within)
 
-        val promise = Promise[Res]
+        val promise = Promise[Res]()
         children.foreach { child =>
           promise.completeWith(child.ask[Res](act => mapper(RouteeCommand(act, msg))))
         }

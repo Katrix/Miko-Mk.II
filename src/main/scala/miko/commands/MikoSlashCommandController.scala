@@ -2,24 +2,25 @@ package miko.commands
 
 import ackcord.CacheSnapshot
 import ackcord.data.{Guild, GuildChannel}
-import ackcord.slashcommands.{CacheCommandInteraction, CacheSlashCommandController, CommandTransformer, GuildCommandInteraction}
+import ackcord.interactions.commands.CacheApplicationCommandController
+import ackcord.interactions.{CacheCommandInteraction, DataInteractionTransformer, GuildCommandInteraction}
 import akka.actor.typed.ActorSystem
+import cats.effect.unsafe.IORuntime
 import miko.MikoConfig
 import miko.settings.GuildSettings.Commands.Permissions.{CommandPermission, CommandPermissionMerge}
 import miko.settings.{GuildSettings, NamedPermission, SettingsAccess}
-import zio.ZEnv
 
 class MikoSlashCommandController(components: MikoCommandComponents)
-    extends CacheSlashCommandController(components.requests) {
+    extends CacheApplicationCommandController(components.requests) {
 
-  def config: MikoConfig            = components.config
-  def settings: SettingsAccess      = components.settingsAccess
-  def zioRuntime: zio.Runtime[ZEnv] = components.runtime
+  def config: MikoConfig       = components.config
+  def settings: SettingsAccess = components.settingsAccess
+  implicit def ioRuntime: IORuntime    = components.runtime
 
   implicit def system: ActorSystem[Nothing] = components.requests.system
 
-  private def getGuildSettingsSync(c: CacheSnapshot, g: Guild): GuildSettings =
-    zioRuntime.unsafeRun(settings.getGuildSettings(g.id))
+  private def getGuildSettingsSync(g: Guild): GuildSettings =
+    settings.getGuildSettings(g.id).unsafeRunSync()
 
   //noinspection ComparingUnrelatedTypes
   private def checkPermissions(m: GuildCommandInteraction[_], permission: CommandPermission)(
@@ -44,11 +45,11 @@ class MikoSlashCommandController(components: MikoCommandComponents)
   def canExecute[M[A] <: CacheCommandInteraction[A]](
       category: CommandCategory,
       getPermissions: GuildSettings.Commands.Permissions => CommandPermission
-  ): CommandTransformer[M, M] = new CommandTransformer[M, M] {
+  ): DataInteractionTransformer[M, M] = new DataInteractionTransformer[M, M] {
     override def filter[A](from: M[A]): Either[Option[String], M[A]] =
       from match {
         case from2: GuildCommandInteraction[A] =>
-          val settings    = getGuildSettingsSync(from2.cache, from2.guild)
+          val settings    = getGuildSettingsSync(from2.guild)
           val permissions = settings.commands.permissions
 
           val categoryPermissions   = category.categoryPermission(permissions)

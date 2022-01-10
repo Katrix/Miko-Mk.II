@@ -1,31 +1,31 @@
-package miko.slaves
+package miko.instances
 
 import akka.actor.typed._
 import akka.actor.typed.scaladsl._
 
 import scala.collection.mutable
 
-class SlaveNegotiator(
-    ctx: ActorContext[SlaveNegotiator.Command],
+class InstanceNegotiator(
+    ctx: ActorContext[InstanceNegotiator.Command],
     reservationId: Long,
-    asked: Seq[ActorRef[AbstractSlave.Command]],
-    replyTo: ActorRef[SlaveHandler.ReservationReply]
-) extends AbstractBehavior[SlaveNegotiator.Command](ctx) {
-  import SlaveNegotiator._
+    asked: Seq[ActorRef[Instance.Command]],
+    replyTo: ActorRef[InstanceHandler.ReservationReply]
+) extends AbstractBehavior[InstanceNegotiator.Command](ctx) {
+  import InstanceNegotiator._
 
   private val awaitingReply = asked.to(mutable.Set)
-  private val preferred     = mutable.Buffer.empty[ActorRef[AbstractSlave.Command]]
-  private val loggedIn      = mutable.Buffer.empty[ActorRef[AbstractSlave.Command]]
-  private val notLoggedIn   = mutable.Buffer.empty[ActorRef[AbstractSlave.Command]]
+  private val preferred     = mutable.Buffer.empty[ActorRef[Instance.Command]]
+  private val loggedIn      = mutable.Buffer.empty[ActorRef[Instance.Command]]
+  private val notLoggedIn   = mutable.Buffer.empty[ActorRef[Instance.Command]]
 
-  def release(seq: collection.Iterable[ActorRef[AbstractSlave.Command]]): Unit =
-    seq.foreach(_ ! AbstractSlave.ReservationHandled(reservationId))
+  def release(seq: collection.Iterable[ActorRef[Instance.Command]]): Unit =
+    seq.foreach(_ ! Instance.ReservationHandled(reservationId))
 
   def announceWinner(): Unit = {
-    def releaseAndSend(seq: mutable.Seq[ActorRef[AbstractSlave.Command]]): Unit =
+    def releaseAndSend(seq: mutable.Seq[ActorRef[Instance.Command]]): Unit =
       if (seq.nonEmpty) {
         release(seq.view.drop(1))
-        seq.head ! AbstractSlave.CompleteReservation(reservationId)
+        seq.head ! Instance.CompleteReservation(reservationId)
       }
 
     if (preferred.nonEmpty || loggedIn.nonEmpty || notLoggedIn.nonEmpty) {
@@ -33,13 +33,13 @@ class SlaveNegotiator(
       releaseAndSend(loggedIn)
       releaseAndSend(notLoggedIn)
     } else {
-      replyTo ! SlaveHandler.ReservationFailed(reservationId)
+      replyTo ! InstanceHandler.ReservationFailed(reservationId)
     }
   }
 
   override def onMessage(msg: Command): Behavior[Command] = msg match {
-    case SlaveReservationStatus(slave, status) =>
-      awaitingReply.remove(slave)
+    case InstanceReservationStatus(instance, status) =>
+      awaitingReply.remove(instance)
 
       status match {
         case ReservationStatus.IsPreferred =>
@@ -47,7 +47,7 @@ class SlaveNegotiator(
             release(loggedIn)
             release(notLoggedIn)
           }
-          preferred += slave
+          preferred += instance
 
         case ReservationStatus.LoggedIn =>
           if (preferred.isEmpty) {
@@ -55,16 +55,16 @@ class SlaveNegotiator(
               release(notLoggedIn)
             }
 
-            loggedIn += slave
+            loggedIn += instance
           } else {
-            slave ! AbstractSlave.ReservationHandled(reservationId)
+            instance ! Instance.ReservationHandled(reservationId)
           }
 
         case ReservationStatus.NotLoggedIn =>
           if (preferred.isEmpty && loggedIn.isEmpty) {
-            notLoggedIn += slave
+            notLoggedIn += instance
           } else {
-            slave ! AbstractSlave.ReservationHandled(reservationId)
+            instance ! Instance.ReservationHandled(reservationId)
           }
 
         case ReservationStatus.AlreadyServingGuild => // NO OP
@@ -86,19 +86,19 @@ class SlaveNegotiator(
       Behaviors.stopped
   }
 }
-object SlaveNegotiator {
+object InstanceNegotiator {
 
   def apply(
       reservationId: Long,
-      asked: Seq[ActorRef[AbstractSlave.Command]],
-      replyTo: ActorRef[SlaveHandler.ReservationReply],
+      asked: Seq[ActorRef[Instance.Command]],
+      replyTo: ActorRef[InstanceHandler.ReservationReply]
   ): Behavior[Command] =
-    Behaviors.setup(ctx => new SlaveNegotiator(ctx, reservationId, asked, replyTo))
+    Behaviors.setup(ctx => new InstanceNegotiator(ctx, reservationId, asked, replyTo))
 
   sealed trait Command
 
-  case class SlaveReservationStatus(
-      slave: ActorRef[AbstractSlave.Command],
+  case class InstanceReservationStatus(
+      instance: ActorRef[Instance.Command],
       status: ReservationStatus
   ) extends Command
 

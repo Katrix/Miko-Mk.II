@@ -15,7 +15,7 @@ class MikoHelpCommand(requests: Requests) extends HelpCommand(requests) {
       implicit c: CacheSnapshot
   ): Future[CreateMessageData] = Future.successful(
     CreateMessageData(
-      embed = Some(
+      embeds = Seq(
         OutgoingEmbed(
           title = Some(s"Commands matching: $query"),
           fields = matches.map(createContent(_))
@@ -26,7 +26,7 @@ class MikoHelpCommand(requests: Requests) extends HelpCommand(requests) {
 
   override def createReplyAll(message: Message, page: Int)(implicit c: CacheSnapshot): Future[CreateMessageData] = {
     if (page <= 0) {
-      Future.successful(CreateMessageData(embed = Some(OutgoingEmbed(description = Some("Invalid Page")))))
+      Future.successful(CreateMessageData(embeds = Seq(OutgoingEmbed(description = Some("Invalid Page")))))
     } else {
       Future
         .traverse(registeredCommands.toSeq) { entry =>
@@ -53,7 +53,7 @@ class MikoHelpCommand(requests: Requests) extends HelpCommand(requests) {
           } else {
 
             CreateMessageData(
-              embed = Some(
+              embeds = Seq(
                 OutgoingEmbed(
                   fields = commandSlice.map(createContent(_)),
                   footer = Some(OutgoingEmbedFooter(s"Page: $page of $maxPages"))

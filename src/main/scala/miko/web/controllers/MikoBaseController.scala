@@ -8,14 +8,14 @@ import ackcord.{CacheSnapshot, Requests}
 import akka.actor.typed.scaladsl.AskPattern._
 import akka.actor.typed.{ActorRef, ActorSystem}
 import akka.util.Timeout
+import cats.effect.IO
+import cats.effect.unsafe.IORuntime
 import miko.CacheStorage
 import miko.util.SGFCPool
 import miko.web.controllers.MikoBaseController.PublicActionRefiner
 import miko.web.models.{GuildViewInfo, ViewInfo}
 import play.api.i18n.I18nSupport
 import play.api.mvc._
-import scalacache.modes.scalaFuture.mode
-import zio.ZEnv
 
 import scala.concurrent.duration._
 import scala.concurrent.{ExecutionContext, Future}
@@ -37,9 +37,9 @@ trait MikoBaseController extends BaseController with I18nSupport with CircePlayC
 
   implicit lazy val executionContext: ExecutionContext = defaultExecutionContext
 
-  implicit def memberCache: scalacache.Cache[(User, GuildMember)]
+  implicit def memberCache: scalacache.Cache[IO, UserId, (User, GuildMember)]
 
-  def zioRuntime: zio.Runtime[ZEnv]
+  implicit def ioRuntime: IORuntime
 
   def isAuthed[A](request: Request[A]): Boolean = request.session.get("userId").isDefined
 
@@ -99,18 +99,22 @@ trait MikoBaseController extends BaseController with I18nSupport with CircePlayC
           guild   <- info.cache.getGuild(guildId)
         } yield {
           memberCache
-            .cachingF[Future](info.userId)(Some(2.minutes)) {
-              val member = guild.members
-                .get(info.userId)
-                .fold(requests.singleFutureSuccess(guild.fetchGuildMember(info.userId)).map(_.toGuildMember(guild.id)))(
-                  Future.successful
-                )
+            .cachingF(info.userId)(Some(2.minutes)) {
+              IO.fromFuture {
+                IO {
+                  val member = guild.members
+                    .get(info.userId)
+                    .fold(requests.singleFutureSuccess(guild.fetchGuildMember(info.userId)).map(_.toGuildMember(guild.id)))(
+                      Future.successful
+                    )
 
-              val user = info.cache
-                .getUser(info.userId)
-                .fold(requests.singleFutureSuccess(GetUser(info.userId)))(Future.successful)
+                  val user = info.cache
+                    .getUser(info.userId)
+                    .fold(requests.singleFutureSuccess(GetUser(info.userId)))(Future.successful)
 
-              user.zip(member)
+                  user.zip(member)
+                }
+              }
             }
             .map { case (user, member) =>
               GuildViewInfo(
@@ -122,7 +126,7 @@ trait MikoBaseController extends BaseController with I18nSupport with CircePlayC
                 user,
                 info.cache
               )
-            }
+            }.unsafeToFuture()
         }
 
         guildInfo.fold[Future[Either[Result, GuildRequest[A]]]](Future.successful(Left(NotFound))) { info =>

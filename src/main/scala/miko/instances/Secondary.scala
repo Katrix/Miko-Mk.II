@@ -1,26 +1,25 @@
-package miko.slaves
+package miko.instances
 
 import ackcord.gateway.GatewaySettings
 import ackcord.{Cache, DiscordShard}
 import akka.actor.typed._
 import akka.actor.typed.scaladsl._
 import akka.http.scaladsl.model.Uri
-import miko.slaves.AbstractSlave.StopNow
+import miko.instances.Instance.StopNow
 
-class Slave(
-    ctx: ActorContext[AbstractSlave.Command],
-    timers: TimerScheduler[AbstractSlave.Command],
+class Secondary(
+    ctx: ActorContext[Instance.Command],
+    timers: TimerScheduler[Instance.Command],
     wsUri: Uri,
     token: String
-) extends AbstractSlave(ctx, timers) {
+) extends Instance(ctx, timers) {
 
   val cache: Cache                          = Cache.create()
   var shard: ActorRef[DiscordShard.Command] = _
 
   def logInIfNeeded(): Unit =
     if (shard == null) {
-      shard =
-        context.spawn(DiscordShard(wsUri, GatewaySettings(token, guildSubscriptions = false), cache), "SlaveShard")
+      shard = context.spawn(DiscordShard(wsUri, GatewaySettings(token), cache), "SecondaryShard")
       shard ! DiscordShard.StartShard
     }
 
@@ -30,7 +29,7 @@ class Slave(
       shard = null
     }
 
-  override def stopSlave(): Unit = {
+  override def stopInstance(): Unit = {
     if (shard != null) {
       context.watchWith(shard, StopNow)
       shard ! DiscordShard.StopShard
@@ -43,5 +42,7 @@ class Slave(
 
   override def userRemoved(): Unit = shutdownIfUnused()
 
-  override def bestStatus: SlaveNegotiator.ReservationStatus = SlaveNegotiator.ReservationStatus.LoggedIn
+  override def bestStatus: InstanceNegotiator.ReservationStatus =
+    if (shard != null) InstanceNegotiator.ReservationStatus.LoggedIn
+    else InstanceNegotiator.ReservationStatus.NotLoggedIn
 }

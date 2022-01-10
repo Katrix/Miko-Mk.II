@@ -1,36 +1,21 @@
 package miko.db
 
-import java.time.OffsetDateTime
-
 import ackcord.data._
-import cats.effect.Bracket
+import cats.effect.kernel.MonadCancelThrow
 import doobie._
-import doobie.enum.JdbcType
 import doobie.implicits._
+import doobie.postgres.implicits._
 import io.circe._
 import io.circe.syntax._
 import miko.MikoProtocol._
 
-class DBAccess[F[_]](implicit xa: Transactor[F], F: Bracket[F, Throwable]) {
-
-  implicit private val messageCodec: Codec[Message] = {
-    import io.circe.generic.semiauto._
-    deriveCodec[Message]
-  }
+class DBAccess[F[_]](implicit xa: Transactor[F], F: MonadCancelThrow[F]) {
 
   implicit def snowflakeMeta[A]: Meta[SnowflakeType[A]] =
     Meta[Long].asInstanceOf[Meta[SnowflakeType[A]]]
 
   implicit val byteArrayMeta: Meta[IndexedSeq[Byte]] =
     Meta[Array[Byte]].timap[IndexedSeq[Byte]](_.toIndexedSeq)(_.toArray)
-
-  implicit val offsetDateTimeMeta: Meta[OffsetDateTime] = Meta.Basic.one(
-    JdbcType.TimestampWithTimezone,
-    List(JdbcType.Timestamp),
-    _.getObject(_, classOf[OffsetDateTime]),
-    _.setObject(_, _),
-    _.updateObject(_, _)
-  )
 
   def insertVTMsg(
       msg: Message,

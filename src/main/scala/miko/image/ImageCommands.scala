@@ -2,7 +2,8 @@ package miko.image
 
 import ackcord.OptFuture
 import ackcord.data.{OutgoingEmbed, OutgoingEmbedImage}
-import ackcord.slashcommands.{Command, ResolvedCommandInteraction}
+import ackcord.interactions.ResolvedCommandInteraction
+import ackcord.interactions.commands.SlashCommand
 import ackcord.util.JsonSome
 import akka.actor.typed.ActorRef
 import akka.actor.typed.scaladsl.AskPattern._
@@ -22,12 +23,12 @@ class ImageCommands(imageCache: ActorRef[ImageCache.Command])(implicit component
       description: String,
       getPermissions: GuildSettings.Commands.Permissions => CommandPermission,
       tpe: ImageType
-  ): Command[ResolvedCommandInteraction, Option[String]] =
-    Command
+  ): SlashCommand[ResolvedCommandInteraction, Option[String]] =
+    SlashCommand
       .andThen(canExecute(CommandCategory.General, getPermissions))
       .withExtra(CommandCategory.General.slashExtra)
       .named(name, description)
-      .withParams(string("Tags", "The tags to search for. Seperate multiple tags with +").notRequired)
+      .withParams(string("tags", "The tags to search for. Seperate multiple tags with +").notRequired)
       .handle { implicit m =>
         def descEmbed(str: String): Seq[OutgoingEmbed] = Seq(OutgoingEmbed(description = Some(str)))
         implicit val timeout: Timeout                  = Timeout(30.seconds)
@@ -67,6 +68,6 @@ class ImageCommands(imageCache: ActorRef[ImageCache.Command])(implicit component
         }
       }
 
-  val safebooru: Command[ResolvedCommandInteraction, Option[String]] =
+  val safebooru: SlashCommand[ResolvedCommandInteraction, Option[String]] =
     imageCommand("safebooru", "Fetch an image from safebooru", _.general.safebooru, ImageType.Safebooru)
 }

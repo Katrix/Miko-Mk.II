@@ -1,31 +1,28 @@
 package miko.voicetext
 
-import java.text.Normalizer
-import java.text.Normalizer.Form
-import java.util.Locale
-
 import ackcord._
 import ackcord.data._
 import ackcord.requests.{Requests => _, _}
 import ackcord.syntax._
 import akka.NotUsed
 import akka.stream.scaladsl.{Flow, Sink, Source}
+import cats.effect.IO
 import miko.db.DBAccess
 import miko.settings.GuildSettings.VoiceText.{VTPermissionGroup, VTPermissionSet, VTPermissionValue}
 import miko.settings.{GuildSettings, SettingsAccess}
 import miko.util.MiscHelper
 import org.slf4j.{Logger, LoggerFactory}
-import zio.blocking.Blocking
-import zio.{RIO, Task}
 
+import java.text.Normalizer
+import java.text.Normalizer.Form
+import java.util.Locale
 import scala.concurrent.duration._
 
 class VoiceTextStreams(
     implicit requests: Requests,
-    taskStreamable: Streamable[Task],
-    blockingStreamable: Streamable[RIO[Blocking, *]],
+    ioStreamable: Streamable[IO],
     settings: SettingsAccess,
-    db: DBAccess[Task]
+    db: DBAccess[IO]
 ) {
   import VoiceTextStreams._
 
@@ -66,26 +63,34 @@ class VoiceTextStreams(
       .getOrElse(Source.empty)
 
   private def guildSettings(guildId: GuildId): Source[GuildSettings, NotUsed] =
-    blockingStreamable.toSource(settings.getGuildSettings(guildId))
+    ioStreamable.toSource(settings.getGuildSettings(guildId))
 
   def saveDestructable: Flow[APIMessage, Int, NotUsed] =
     Flow[APIMessage]
       .collect {
-        case APIMessage.MessageCreate(_, msg: GuildGatewayMessage, CacheState(c, _)) =>
+        case APIMessage.MessageCreate(_, msg: GuildGatewayMessage, CacheState(c, _), _) =>
           saveDesctructableCommon(msg, c).flatMapConcat {
             case (user, channel, category, key) =>
-              taskStreamable.toSource(db.insertVTMsg(msg, channel, category, user, key))
+              ioStreamable.toSource(db.insertVTMsg(msg, channel, category, user, key))
           }
 
-        case APIMessage.MessageUpdate(_, msg: GuildGatewayMessage, CacheState(c, _)) =>
-          saveDesctructableCommon(msg, c).flatMapConcat {
-            case (user, channel, category, key) =>
-              taskStreamable.toSource(db.updateVTMsg(msg, channel, category, user, key))
-          }
+        case APIMessage.MessageUpdate(_, msgId, channelId, CacheState(c, _), _) =>
+          //TODO: Create the message in the cache in AckCord if it's not present, or expose the original event in the APIMessage
+          Source
+            .single(c.getMessage(channelId, msgId).collect {
+              case msg: GuildGatewayMessage => msg
+            })
+            .mapConcat(_.toList)
+            .flatMapConcat { msg =>
+              saveDesctructableCommon(msg, c).flatMapConcat {
+                case (user, channel, category, key) =>
+                  ioStreamable.toSource(db.updateVTMsg(msg, channel, category, user, key))
+              }
+            }
 
-        case APIMessage.MessageDelete(messageId, Some(guild), channelId, CacheState(c, _)) =>
+        case APIMessage.MessageDelete(messageId, Some(guild), channelId, CacheState(c, _), _) =>
           isSaveDesctructableChannel(guild.id, channelId.asChannelId[GuildChannel])(c).flatMapConcat { _ =>
-            taskStreamable.toSource(db.deleteVTMsg(messageId))
+            ioStreamable.toSource(db.deleteVTMsg(messageId))
           }
       }
       .flatMapMerge(100, identity)
@@ -104,8 +109,8 @@ class VoiceTextStreams(
               prevChannelIdOpt = prevGuild.voiceStateFor(userId).flatMap(_.channelId)
               if channelIdOpt != prevChannelIdOpt
             } yield {
-              val channelOpt     = channelIdOpt.flatMap(_.resolve(guildId))
-              val prevChannelOpt = prevChannelIdOpt.flatMap(_.resolve(guildId))
+              val channelOpt     = channelIdOpt.flatMap(_.resolve(guildId)).collect { case ch: NormalVoiceGuildChannel => ch }
+              val prevChannelOpt = prevChannelIdOpt.flatMap(_.resolve(guildId)).collect { case ch: NormalVoiceGuildChannel => ch }
 
               val removeAndExitF = prevChannelOpt
                 .map { prevChannel =>
@@ -168,8 +173,8 @@ class VoiceTextStreams(
       .via(cleanupGuild)
       .via(RequestStreams.removeContext(requests.flow[Any, NotUsed]))
 
-  def cleanupGuild: Flow[(Guild, CacheSnapshot), Request[_], NotUsed] =
-    Flow[(Guild, CacheSnapshot)]
+  def cleanupGuild: Flow[(GatewayGuild, CacheSnapshot), Request[_], NotUsed] =
+    Flow[(GatewayGuild, CacheSnapshot)]
       .flatMapMerge(requests.settings.parallelism, {
         case (guild, c) => guildSettings(guild.id).map(settings => (guild, c, settings))
       })
@@ -180,7 +185,7 @@ class VoiceTextStreams(
           implicit val settings: GuildSettings = settingsObj
 
           for {
-            vChannel <- guild.voiceChannels
+            vChannel <- guild.normalVoiceChannels
             if canHaveTextChannel(vChannel, guild)
           } yield {
             val (remaining, removeReqs) = removeIfEmpty(vChannel, guild)
@@ -202,8 +207,8 @@ class VoiceTextStreams(
       .via(shiftChannelsGuildFlow)
       .via(RequestStreams.removeContext(requests.flow[Any, NotUsed]))
 
-  def shiftChannelsGuildFlow: Flow[(Guild, CacheSnapshot), Request[_], NotUsed] =
-    Flow[(Guild, CacheSnapshot)].flatMapMerge(
+  def shiftChannelsGuildFlow: Flow[(GatewayGuild, CacheSnapshot), Request[_], NotUsed] =
+    Flow[(GatewayGuild, CacheSnapshot)].flatMapMerge(
       requests.settings.parallelism, {
         case (guild, _) =>
           guildSettings(guild.id)
@@ -212,7 +217,7 @@ class VoiceTextStreams(
       }
     )
 
-  def fixUsersInChannel(vChannel: VoiceGuildChannel, tChannel: TextGuildChannel, guild: Guild)(
+  def fixUsersInChannel(vChannel: NormalVoiceGuildChannel, tChannel: TextGuildChannel, guild: GatewayGuild)(
       implicit c: CacheSnapshot,
       settings: GuildSettings
   ): Source[Request[_], NotUsed] = {
@@ -279,14 +284,14 @@ class VoiceTextStreams(
     exitRoomRequests ++ fixedUsers
   }
 
-  def shiftChannelsGuild(guild: Guild): Seq[Request[_]] = {
+  def shiftChannelsGuild(guild: GatewayGuild): Seq[Request[_]] = {
     val shiftingCategories = guild.categories.filter(_.name.endsWith(" #"))
     log.info("Shifting {}", shiftingCategories.map(_.name))
 
-    val groupedByCategory: Map[String, Seq[VoiceGuildChannel]] = shiftingCategories.map { cat =>
+    val groupedByCategory: Map[String, Seq[NormalVoiceGuildChannel]] = shiftingCategories.map { cat =>
       val channels =
         cat
-          .voiceChannels(guild)
+          .normalVoiceChannels(guild)
           .flatMap { ch =>
             ch.name match {
               case numberAtEnd(number) => Some(ch -> number.toInt)
@@ -301,10 +306,10 @@ class VoiceTextStreams(
 
     log.info("Grouped by category {}", groupedByCategory.map(t => t._1 -> t._2.map(_.name)))
 
-    val categoryFiltered: Map[String, (Seq[VoiceGuildChannel], Seq[VoiceGuildChannel])] =
+    val categoryFiltered: Map[String, (Seq[NormalVoiceGuildChannel], Seq[NormalVoiceGuildChannel])] =
       groupedByCategory.flatMap {
         case (cat, vChannels) =>
-          def hasCorrectName(channel: VoiceGuildChannel, num: String) =
+          def hasCorrectName(channel: NormalVoiceGuildChannel, num: String) =
             channel.name == cat.replace("#", num)
 
           val allNamesCorrect =
@@ -353,14 +358,14 @@ class VoiceTextStreams(
         }
 
         val changePosRequest = guild.modifyChannelPositions(
-          SnowflakeMap.from(toRename.zipWithIndex.map(t => t._1.id -> (startPos + t._2)))
+          SnowflakeMap.from(toRename.zipWithIndex.map(t => (t._1.id: GuildChannelId) -> (startPos + t._2)))
         )
 
         (deleteRequests ++ renameRequests) :+ changePosRequest: Seq[Request[_]]
     }.toVector
   }
 
-  def removeIfEmpty(channel: VoiceGuildChannel, guild: Guild)(
+  def removeIfEmpty(channel: NormalVoiceGuildChannel, guild: GatewayGuild)(
       implicit settings: GuildSettings
   ): (Seq[TextGuildChannel], Source[DeleteCloseChannel, NotUsed]) = {
     val tChannels              = getTextChannel(channel, guild)
@@ -372,8 +377,8 @@ class VoiceTextStreams(
   }
 
   private def filterRemovableChannels(
-      vChannel: VoiceGuildChannel,
-      guild: Guild,
+      vChannel: NormalVoiceGuildChannel,
+      guild: GatewayGuild,
       channels: Seq[TextGuildChannel]
   )(implicit settings: GuildSettings): (Seq[TextGuildChannel], Seq[TextGuildChannel]) =
     if (settings.voiceText.destructive.enabled && vChannel.connectedUsers(guild).isEmpty)
@@ -384,8 +389,8 @@ class VoiceTextStreams(
   def userExitTChannel(
       member: GuildMember,
       tChannel: TextGuildChannel,
-      vChannel: VoiceGuildChannel,
-      guild: Guild
+      vChannel: NormalVoiceGuildChannel,
+      guild: GatewayGuild
   )(
       implicit c: CacheSnapshot,
       settings: GuildSettings
@@ -395,7 +400,7 @@ class VoiceTextStreams(
   def applyPerms(
       member: GuildMember,
       tChannel: TextGuildChannel,
-      guild: Guild,
+      guild: GatewayGuild,
       perm: VTPermissionValue
   )(implicit c: CacheSnapshot): Request[NotUsed] =
     if (MiscHelper.canHandlerMember(guild, member) && perm.isNone)
@@ -403,7 +408,7 @@ class VoiceTextStreams(
     else
       tChannel.editChannelPermissionsUser(member.userId, perm.allowNative, perm.denyNative)
 
-  def userEnterVChannel(member: GuildMember, channel: VoiceGuildChannel, guild: Guild)(
+  def userEnterVChannel(member: GuildMember, channel: NormalVoiceGuildChannel, guild: GatewayGuild)(
       implicit
       c: CacheSnapshot,
       settings: GuildSettings
@@ -421,7 +426,7 @@ class VoiceTextStreams(
     } else s1
   }
 
-  def permGroupForChannel(channel: VoiceGuildChannel)(implicit settings: GuildSettings): VTPermissionGroup = {
+  def permGroupForChannel(channel: NormalVoiceGuildChannel)(implicit settings: GuildSettings): VTPermissionGroup = {
     val permSettings = settings.voiceText.perms
     permSettings.overrideChannel
       .get(channel.id)
@@ -436,7 +441,7 @@ class VoiceTextStreams(
   ): VTPermissionValue =
     getValue(group.users.getOrElse(userId, group.everyone))
 
-  def getOrCreateTextChannel(channel: VoiceGuildChannel, guild: Guild, creator: Option[GuildMember])(
+  def getOrCreateTextChannel(channel: NormalVoiceGuildChannel, guild: GatewayGuild, creator: Option[GuildMember])(
       implicit settings: GuildSettings
   ): Source[Either[CreateGuildChannel, TextGuildChannel], NotUsed] =
     getTextChannel(channel, guild) match {
@@ -480,7 +485,7 @@ class VoiceTextStreams(
       case seq => Source(seq.toIndexedSeq).map(Right.apply)
     }
 
-  def createNextRoom(current: VoiceGuildChannel, guild: Guild): Option[CreateGuildChannel] =
+  def createNextRoom(current: NormalVoiceGuildChannel, guild: GatewayGuild): Option[CreateGuildChannel] =
     for {
       cat <- current.categoryFromGuild(guild)
       if cat.name.endsWith("#")
@@ -503,7 +508,7 @@ class VoiceTextStreams(
 }
 object VoiceTextStreams {
 
-  def canHaveTextChannel(channel: VoiceGuildChannel, guild: Guild)(implicit settings: GuildSettings): Boolean =
+  def canHaveTextChannel(channel: VoiceGuildChannel, guild: GatewayGuild)(implicit settings: GuildSettings): Boolean =
     !guild.afkChannelId.contains(channel.id) &&
       !settings.voiceText.blacklist.channels.contains(channel.id) &&
       channel.parentId.forall(!settings.voiceText.blacklist.categories.contains(_))
@@ -516,7 +521,7 @@ object VoiceTextStreams {
 
   def getTextVoiceChannelName(channel: VoiceGuildChannel): String = s"${makeTextChannelName(channel.name)}-voice"
 
-  def getTextChannel(channel: VoiceGuildChannel, guild: Guild)(
+  def getTextChannel(channel: VoiceGuildChannel, guild: GatewayGuild)(
       implicit settings: GuildSettings
   ): Seq[TextGuildChannel] = {
     val allChannels =

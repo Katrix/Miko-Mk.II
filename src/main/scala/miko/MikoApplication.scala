@@ -1,9 +1,6 @@
 package miko
 
-import java.security.Security
-import java.util.concurrent.{ExecutorService, Executors}
-
-import ackcord.data.{GuildMember, User}
+import ackcord.data.{GuildId, GuildMember, User, UserId}
 import ackcord.requests.Requests
 import ackcord.{CacheSnapshot, Streamable}
 import akka.NotUsed
@@ -13,7 +10,9 @@ import akka.actor.typed.scaladsl.adapter._
 import akka.actor.typed.{ActorRef, ActorSystem}
 import akka.stream.scaladsl.Source
 import akka.util.Timeout
-import cats.effect.Blocker
+import cats.effect.IO
+import cats.effect.unsafe.IORuntime
+import com.github.benmanes.caffeine.cache.Caffeine
 import com.zaxxer.hikari.HikariDataSource
 import controllers.AssetsComponents
 import doobie.hikari.HikariTransactor
@@ -25,19 +24,18 @@ import miko.web.WebEvents
 import miko.web.controllers.{MikoControllerComponents, WebController}
 import org.bouncycastle.jce.provider.BouncyCastleProvider
 import org.slf4j.LoggerFactory
+import play.api._
 import play.api.db.evolutions.EvolutionsComponents
 import play.api.db.{DBComponents, HikariCPComponents}
 import play.api.mvc.{ControllerComponents, EssentialFilter}
 import play.api.routing.Router
-import play.api._
 import play.filters.HttpFiltersComponents
 import play.filters.csp.{CSPConfig, CSPFilter, DefaultCSPProcessor, DefaultCSPResultProcessor}
 import play.filters.gzip.{GzipFilter, GzipFilterConfig}
 import scalacache.caffeine._
-import zio.blocking.Blocking
-import zio.interop.catz._
-import zio.{RIO, Task, ZIO}
 
+import java.security.Security
+import java.util.concurrent.{ExecutorService, Executors}
 import scala.concurrent.duration._
 import scala.concurrent.{Await, ExecutionContext}
 
@@ -59,13 +57,10 @@ class MikoComponents(context: ApplicationLoader.Context)
     with DBComponents
     with HikariCPComponents {
 
-  implicit val zioRuntime: zio.Runtime[zio.ZEnv] = zio.Runtime.default
+  implicit val ioRuntime: IORuntime = cats.effect.unsafe.implicits.global
 
-  implicit val taskStreamable: Streamable[Task] = new Streamable[Task] {
-    override def toSource[A](fa: Task[A]): Source[A, NotUsed] = Source.future(zioRuntime.unsafeRunToFuture(fa))
-  }
-  implicit val blockingStreamable: Streamable[RIO[Blocking, *]] = new Streamable[RIO[Blocking, *]] {
-    override def toSource[A](fa: RIO[Blocking, A]): Source[A, NotUsed] = Source.future(zioRuntime.unsafeRunToFuture(fa))
+  implicit val ioStreamable: Streamable[IO] = new Streamable[IO] {
+    override def toSource[A](fa: IO[A]): Source[A, NotUsed] = Source.future(fa.unsafeToFuture())
   }
 
   override lazy val httpFilters: Seq[EssentialFilter] = {
@@ -112,11 +107,13 @@ class MikoComponents(context: ApplicationLoader.Context)
   }
   implicit lazy val webEvents: WebEvents = WebEvents.create
 
-  implicit lazy val guildSettingsCache: CaffeineCache[GuildSettings] = CaffeineCache[GuildSettings]
-  implicit lazy val memberCache: CaffeineCache[(User, GuildMember)]  = CaffeineCache[(User, GuildMember)]
+  private def makeCache[K, V]: CaffeineCache[IO, K, V] = CaffeineCache[IO, K, V](Caffeine.newBuilder.build[K, scalacache.Entry[V]]())
+
+  implicit lazy val guildSettingsCache: CaffeineCache[IO, GuildId, GuildSettings] = makeCache
+  implicit lazy val memberCache: CaffeineCache[IO, UserId, (User, GuildMember)]   = makeCache
 
   implicit lazy val settings: SettingsAccess = new SettingsAccess()
-  implicit lazy val db: DBAccess[Task]       = new DBAccess[Task]()
+  implicit lazy val db: DBAccess[IO]         = new DBAccess[IO]()
 
   val ece: ExecutorService = Executors.newFixedThreadPool(32)
 
@@ -130,17 +127,13 @@ class MikoComponents(context: ApplicationLoader.Context)
     import doobie._
 
     for {
-      _        <- ZIO.effect(Class.forName(driverClassName))
-      executor <- zio.blocking.blockingExecutor
-      xa <- ZIO.effect(
-        Transactor.fromDataSource[Task](
-          new HikariDataSource,
-          connectEC,
-          Blocker.liftExecutionContext(executor.asEC)
-        )
+      _ <- IO.blocking(Class.forName(driverClassName))
+      xa = Transactor.fromDataSource[IO](
+        new HikariDataSource,
+        connectEC
       )
       _ <- xa.configure { ds =>
-        ZIO.effect {
+        IO.blocking {
           ds.setJdbcUrl(url)
           ds.setUsername(user)
           ds.setPassword(pass)
@@ -149,12 +142,10 @@ class MikoComponents(context: ApplicationLoader.Context)
     } yield xa
   }
 
-  implicit lazy val taskTransactor: HikariTransactor[Task] = {
+  implicit lazy val taskTransactor: HikariTransactor[IO] = {
     val ce = ExecutionContext.fromExecutor(ece)
-
-    zioRuntime.unsafeRun(
-      asyncNewHikariTransactor("org.postgresql.Driver", config.dbUrl, config.dbUsername, config.dbPassword, ce)
-    )
+    asyncNewHikariTransactor("org.postgresql.Driver", config.dbUrl, config.dbUsername, config.dbPassword, ce)
+      .unsafeRunSync()
   }
 
   lazy val shutdown: CoordinatedShutdown = CoordinatedShutdown(actorSystem)
@@ -169,9 +160,9 @@ class MikoComponents(context: ApplicationLoader.Context)
   }
 
   implicit lazy val mikoComponents: MikoControllerComponents =
-    MikoControllerComponents(cacheStorage, requests, memberCache, httpErrorHandler, zioRuntime, controllerComponents)
+    MikoControllerComponents(cacheStorage, requests, memberCache, httpErrorHandler, ioRuntime, controllerComponents)
 
-  lazy val webController = new WebController(assetsFinder, helpCommand)
+  lazy val webController = new WebController(assetsFinder, helpCommand, environment)
 
   lazy val helpCommand: MikoHelpCommand = {
     implicit val timeout: Timeout = 1.minute

@@ -1,14 +1,15 @@
 package miko.web.controllers
 
-import ackcord.data.{GuildMember, User}
+import ackcord.data.{GuildMember, User, UserId}
 import ackcord.{CacheSnapshot, Requests}
 import akka.actor.typed.ActorRef
+import cats.effect.IO
+import cats.effect.unsafe.IORuntime
 import miko.CacheStorage
 import miko.util.SGFCPool
 import play.api.http.HttpErrorHandler
 import play.api.mvc.AbstractController
 import scalacache.Cache
-import zio.ZEnv
 
 class AbstractMikoController(components: MikoControllerComponents)
     extends AbstractController(components)
@@ -17,9 +18,9 @@ class AbstractMikoController(components: MikoControllerComponents)
 
   override def requests: Requests = components.requests
 
-  implicit override def memberCache: Cache[(User, GuildMember)] = components.memberCache
+  implicit override def memberCache: Cache[IO, UserId, (User, GuildMember)] = components.memberCache
 
   override def errorHandler: HttpErrorHandler = components.errorHandler
 
-  override def zioRuntime: zio.Runtime[ZEnv] = components.runtime
+  override def ioRuntime: IORuntime = components.ioRuntime
 }

@@ -1,9 +1,12 @@
 package miko
 
-import ackcord.SnowflakeMap
+import ackcord.CacheSnapshot.BotUser
 import ackcord.data._
+import ackcord.{MemoryCacheSnapshot, SnowflakeMap}
 import io.circe._
 import io.circe.generic.extras.semiauto._
+import io.circe.syntax._
+import shapeless.tag.@@
 
 import scala.util.Try
 
@@ -25,27 +28,47 @@ trait MikoProtocol extends DiscordProtocol {
   implicit def snowflakeKeyDecoder[A]: KeyDecoder[SnowflakeType[A]] =
     KeyDecoder.instance(s => Try(RawSnowflake(s)).toOption.map(SnowflakeType[A]))
 
-  implicit val messageActivityCodec: Codec[MessageActivity] = deriveConfiguredCodec
+  implicit private lazy val botUserEncoder: Encoder[User @@ BotUser] = (a: User @@ BotUser) => (a: User).asJson
+  implicit private lazy val botUserDecoder: Decoder[User @@ BotUser] = (c: HCursor) =>
+    c.as[User].map(u => shapeless.tag[BotUser](u))
 
-  implicit val messageCodec: Codec[Message] = deriveConfiguredCodec
+  implicit private lazy val cacheProcessorEncoder: Encoder[MemoryCacheSnapshot.CacheProcessor] =
+    (_: MemoryCacheSnapshot.CacheProcessor) => Json.Null
+  implicit private lazy val cacheProcessorDecoder: Decoder[MemoryCacheSnapshot.CacheProcessor] = (_: HCursor) =>
+    Right(MemoryCacheSnapshot.defaultCacheProcessor)
 
-  implicit val guildChannelCodec: Codec[GuildChannel] = deriveConfiguredCodec
+  implicit lazy val cacheSnapshotCodec: Codec[MemoryCacheSnapshot] = deriveConfiguredCodec
+
+  implicit lazy val messageActivityCodec: Codec[MessageActivity] = deriveConfiguredCodec
+
+  implicit lazy val stickerCodec: Codec[Sticker] = deriveConfiguredCodec
+
+  implicit lazy val messageCodec: Codec[Message] = deriveConfiguredCodec
+
+  implicit lazy val guildChannelCodec: Codec[GuildChannel] = deriveConfiguredCodec
 
   //TODO: roleCodec should really be roleEncoder in DiscordProtocol
-  //implicit val roleDecoder: Codec[Role] = deriveConfiguredCodec
+  //implicit val roleCodec: Codec[Role] = deriveConfiguredCodec
 
-  implicit val emojiCodec: Codec[Emoji] = deriveConfiguredCodec
+  implicit lazy val emojiCodec: Codec[Emoji] = deriveConfiguredCodec
 
-  implicit val guildMemberCodec: Codec[GuildMember] = deriveConfiguredCodec
+  implicit lazy val guildMemberCodec: Codec[GuildMember] = deriveConfiguredCodec
 
-  implicit val activityPartyCodec: Codec[ActivityParty] = deriveConfiguredCodec
+  implicit lazy val activityPartyCodec: Codec[ActivityParty] = deriveConfiguredCodec
 
-  implicit val activityCodec: Codec[Activity] = deriveConfiguredCodec
+  implicit lazy val activityCodec: Codec[Activity] = deriveConfiguredCodec
 
-  implicit val presenceCodec: Codec[Presence] = deriveConfiguredCodec
+  implicit lazy val presenceCodec: Codec[Presence] = deriveConfiguredCodec
 
-  implicit val guildCodec: Codec[Guild] = deriveConfiguredCodec
+  implicit lazy val guildCodec: Codec[GatewayGuild] = deriveConfiguredCodec
 
-  implicit val banCodec: Codec[Ban]     = deriveConfiguredCodec
+  implicit lazy val dmChannelCodec: Codec[DMChannel]                   = deriveConfiguredCodec
+  implicit lazy val groupDMChannelCodec: Codec[GroupDMChannel]         = deriveConfiguredCodec
+  implicit lazy val threadGuildChannelCodec: Codec[ThreadGuildChannel] = deriveConfiguredCodec
+
+  implicit lazy val threadMemberCodec: Codec[ThreadMember] = deriveConfiguredCodec
+
+  implicit lazy val banCodec: Codec[Ban] = deriveConfiguredCodec
+
 }
 object MikoProtocol extends MikoProtocol

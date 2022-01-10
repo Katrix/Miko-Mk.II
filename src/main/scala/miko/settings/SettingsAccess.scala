@@ -1,41 +1,37 @@
 package miko.settings
 
-import java.nio.file.{Files, Path}
-
 import ackcord.data.GuildId
+import cats.effect.IO
 import io.circe._
 import io.circe.syntax._
 import org.slf4j.LoggerFactory
 import play.api.Environment
 import scalacache.Cache
-import scalacache.CatsEffect.modes.async
-import zio.blocking._
-import zio.interop.catz._
-import zio.{RIO, Task}
 
+import java.nio.file.{Files, Path}
 import scala.concurrent.duration._
 import scala.jdk.CollectionConverters._
 
-class SettingsAccess(implicit cache: Cache[GuildSettings], environment: Environment) {
+class SettingsAccess(implicit cache: Cache[IO, GuildId, GuildSettings], environment: Environment) {
 
   private val logger = LoggerFactory.getLogger(classOf[SettingsAccess])
 
   private def guildSettingsFile(guildId: GuildId): Path =
     environment.rootPath.toPath.resolve("configs").resolve(s"${guildId.asString}.json")
 
-  private def getGuildSettingsUncached(guildId: GuildId): RIO[Blocking, GuildSettings] = {
+  private def getGuildSettingsUncached(guildId: GuildId): IO[GuildSettings] = {
     val file          = guildSettingsFile(guildId)
-    val notExists     = effectBlocking(Files.notExists(file))
+    val notExists     = IO.blocking(Files.notExists(file))
     val createDefault = createNewConfig(guildId)
 
-    val readConfig = effectBlocking(parseConfig(Files.readAllLines(file).asScala.mkString("\n"))).map {
+    val readConfig = IO.blocking(parseConfig(Files.readAllLines(file).asScala.mkString("\n"))).map {
       case Left(e) =>
         logger.error("Failed to parse config", e)
         GuildSettings()
       case Right(value) => value
     }
 
-    createDefault.whenM(notExists) *> readConfig
+    notExists.ifM(ifTrue = createDefault, ifFalse = IO.unit) *> readConfig
   }
 
   private def parseConfig(s: String): Either[Error, GuildSettings] = {
@@ -44,13 +40,14 @@ class SettingsAccess(implicit cache: Cache[GuildSettings], environment: Environm
       version <- json.hcursor.get[String]("version")
       config <- version match {
         case "1" => json.as[GuildSettings]
+        case _   => Left(DecodingFailure("Invalid config version", json.hcursor.history))
       }
     } yield config
   }
 
-  private def createNewConfig(guildId: GuildId): RIO[Blocking, Path] = {
+  private def createNewConfig(guildId: GuildId): IO[Path] = {
     val file = guildSettingsFile(guildId)
-    effectBlocking {
+    IO.blocking {
       Files.createDirectories(file.getParent)
       Files.write(
         file,
@@ -63,9 +60,9 @@ class SettingsAccess(implicit cache: Cache[GuildSettings], environment: Environm
   private def updateGuildSettingsFile(
       guildId: GuildId,
       settingsUpdate: GuildSettings => GuildSettings
-  ): RIO[Blocking, Path] = {
+  ): IO[Path] = {
     getGuildSettings(guildId).flatMap { settings =>
-      effectBlocking(
+      IO.blocking(
         Files.write(
           guildSettingsFile(guildId),
           Seq(settingsUpdate(settings).asJson.deepMerge(Json.obj("version" -> "1".asJson)).noSpaces).asJava
@@ -74,10 +71,11 @@ class SettingsAccess(implicit cache: Cache[GuildSettings], environment: Environm
     }
   }
 
-  def getGuildSettings(guildId: GuildId): RIO[Blocking, GuildSettings] =
+  def getGuildSettings(guildId: GuildId): IO[GuildSettings] = {
     cache.cachingF(guildId)(Some(30.minutes))(getGuildSettingsUncached(guildId))
+  }
 
-  def updateGuildSettings(guildId: GuildId, settings: GuildSettings => GuildSettings): RIO[Blocking, Unit] =
-    updateGuildSettingsFile(guildId, settings) *> cache.remove[Task](guildId).unit
+  def updateGuildSettings(guildId: GuildId, settings: GuildSettings => GuildSettings): IO[Unit] =
+    updateGuildSettingsFile(guildId, settings) *> cache.remove(guildId)
 
 }

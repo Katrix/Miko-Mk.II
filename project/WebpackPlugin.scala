@@ -47,21 +47,21 @@ object WebpackPlugin extends AutoPlugin {
   }
 
   private lazy val isDevModeTask: Def.Initialize[Task[Boolean]] = Def.task {
-    (devCommands in webpack).value.contains(executedCommandKey.value)
+    (webpack / devCommands).value.contains(executedCommandKey.value)
   }
 
   override def projectSettings: Seq[Def.Setting[_]] = Seq(
-    devCommands in webpack := Seq("run", "compile", "re-start", "reStart", "runAll", "webpackDev"),
-    webpackMonitoredDirectories := Seq.empty,
-    (includeFilter in webpackMonitoredFiles) := AllPassFilter,
-    webpackExtraArgs := Seq.empty,
-    webpackNodeArgs := Seq.empty,
-    yarnExtraArgs := Seq.empty,
-    sourceGenerators in Assets += webpack.taskValue,
-    yarnInstall := {
+    webpack / devCommands := Seq("run", "compile", "re-start", "reStart", "runAll", "webpackDev"),
+    Assets / webpackMonitoredDirectories := Seq.empty,
+    Assets / webpackMonitoredFiles / includeFilter := AllPassFilter,
+    Assets / webpackExtraArgs := Seq.empty,
+    Assets / webpackNodeArgs := Seq.empty,
+    Assets / yarnExtraArgs := Seq.empty,
+    Assets / sourceGenerators += webpack.taskValue,
+    Assets / yarnInstall := {
       val baseDir    = baseDirectory.value
       val streamsObj = streams.value
-      val extraArgs  = yarnExtraArgs.value
+      val extraArgs  = (Assets / yarnExtraArgs).value
 
       val packageJsonFile = baseDir / "package.json"
 
@@ -80,11 +80,11 @@ object WebpackPlugin extends AutoPlugin {
     },
     webpack := webpackTask.value,
     webpackDev := webpackTask.value,
-    webpackMonitoredFiles in Assets := {
-      val webpackDevConfigFile  = (webpackDevConfig in Assets).value
-      val webpackProdConfigFile = (webpackProdConfig in Assets).value
-      val filter                = (includeFilter in webpackMonitoredFiles).value
-      val dirs                  = (webpackMonitoredDirectories in Assets).value
+    Assets / webpackMonitoredFiles := {
+      val webpackDevConfigFile  = (Assets / webpackDevConfig).value
+      val webpackProdConfigFile = (Assets / webpackProdConfig).value
+      val filter                = (Assets / webpackMonitoredFiles / includeFilter).value
+      val dirs                  = (Assets / webpackMonitoredDirectories).value
 
       val additionalFiles: Seq[File] = dirs.flatMap(dir => (dir ** filter).get)
       webpackDevConfigFile +: webpackProdConfigFile +: additionalFiles
@@ -94,13 +94,13 @@ object WebpackPlugin extends AutoPlugin {
   val webpackTask = Def.task {
     val isDevMode             = isDevModeTask.value
     val cacheLocation         = streams.value.cacheDirectory / s"webpack"
-    val webpackDevConfigFile  = (webpackDevConfig in Assets).value
-    val webpackProdConfigFile = (webpackProdConfig in Assets).value
-    val workingDir            = yarnInstall.value
+    val webpackDevConfigFile  = (Assets / webpackDevConfig).value
+    val webpackProdConfigFile = (Assets / webpackProdConfig).value
+    val workingDir            = (Assets / yarnInstall).value
     val log                   = streams.value.log
-    val monitoredFiles        = (webpackMonitoredFiles in Assets).value
-    val extraArgs             = (webpackExtraArgs in Assets).value
-    val nodeArgs              = (webpackNodeArgs in Assets).value
+    val monitoredFiles        = (Assets / webpackMonitoredFiles).value
+    val extraArgs             = (Assets / webpackExtraArgs).value
+    val nodeArgs              = (Assets / webpackNodeArgs).value
 
     val webpackConfigFile = if (isDevMode) webpackDevConfigFile else webpackProdConfigFile
 

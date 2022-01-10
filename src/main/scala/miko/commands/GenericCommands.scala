@@ -1,8 +1,5 @@
 package miko.commands
 
-import java.text.NumberFormat
-import java.util.regex.Pattern
-
 import ackcord._
 import ackcord.commands._
 import ackcord.data._
@@ -11,24 +8,18 @@ import ackcord.syntax._
 import akka.NotUsed
 import akka.actor.CoordinatedShutdown
 import akka.http.scaladsl.model.ContentTypes
-import akka.stream.scaladsl.Flow
 import cats.syntax.all._
 import fansi.Attrs
 import miko.settings.GuildSettings.Commands.Permissions.CommandPermission
-import miko.settings.{GuildSettings, NamedPermission}
-import miko.util.{Crypto, PGPKeys}
-import miko.voicetext.VoiceTextStreams
 import play.api.ApplicationLoader.DevContext
 import pprint.{PPrinter, Tree, Util}
-import zio.blocking.Blocking
-import zio.{RIO, ZIO}
 
+import java.util.regex.Pattern
 import scala.util.Try
 import scala.util.control.NonFatal
 
-class GenericCommands(vtStreams: VoiceTextStreams, devContext: Option[DevContext])(
+class GenericCommands(devContext: Option[DevContext])(
     implicit components: MikoCommandComponents,
-    blockingStreamable: Streamable[RIO[Blocking, *]]
 ) extends MikoCommandController(components) {
 
   def kill(shutdown: CoordinatedShutdown): NamedDescribedCommand[NotUsed] =

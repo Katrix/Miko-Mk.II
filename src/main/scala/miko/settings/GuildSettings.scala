@@ -2,6 +2,7 @@ package miko.settings
 
 import ackcord.data._
 import cats.kernel.Monoid
+import cats.syntax.all._
 import io.circe._
 import io.circe.generic.semiauto._
 import io.circe.syntax._
@@ -11,7 +12,8 @@ case class PublicGuildSettings(
     channels: GuildSettings.Channels = GuildSettings.Channels(),
     music: GuildSettings.Music = GuildSettings.Music(),
     voiceText: GuildSettings.VoiceText = GuildSettings.VoiceText(),
-    commands: GuildSettings.Commands = GuildSettings.Commands()
+    commands: GuildSettings.Commands = GuildSettings.Commands(),
+    modLog: GuildSettings.ModLog = GuildSettings.ModLog()
 ) {
 
   def toAll(gs: GuildSettings): GuildSettings = GuildSettings(
@@ -19,7 +21,8 @@ case class PublicGuildSettings(
     music,
     gs.guildEncryption,
     voiceText,
-    commands
+    commands,
+    modLog
   )
 }
 object PublicGuildSettings {
@@ -31,14 +34,16 @@ case class GuildSettings(
     music: GuildSettings.Music = GuildSettings.Music(),
     guildEncryption: GuildSettings.GuildEncryption = GuildSettings.GuildEncryption(),
     voiceText: GuildSettings.VoiceText = GuildSettings.VoiceText(),
-    commands: GuildSettings.Commands = GuildSettings.Commands()
+    commands: GuildSettings.Commands = GuildSettings.Commands(),
+    modLog: GuildSettings.ModLog = GuildSettings.ModLog()
 ) {
 
   def asPublic: PublicGuildSettings = PublicGuildSettings(
     channels,
     music,
     voiceText,
-    commands
+    commands,
+    modLog
   )
 }
 object GuildSettings {
@@ -191,6 +196,7 @@ object GuildSettings {
           defVolume: CommandPermission = CommandPermission.Allow,
           stop: CommandPermission = CommandPermission.Allow,
           nowPlaying: CommandPermission = CommandPermission.Allow,
+          playlist: CommandPermission = CommandPermission.Allow,
           queue: CommandPermission = CommandPermission.Allow,
           next: CommandPermission = CommandPermission.Allow,
           prev: CommandPermission = CommandPermission.Allow,
@@ -271,5 +277,126 @@ object GuildSettings {
         case class Xor(permissions: Seq[CommandPermission]) extends CommandPermission
       }
     }
+  }
+
+  case class ModLog(
+      channelId: Option[TextGuildChannelId] = None,
+      ignoredAuditLogEvents: Seq[AuditLogEvent] = Nil,
+  )
+  object ModLog {
+    implicit val codec: Codec[ModLog] = Codec.from(
+      (c: HCursor) =>
+        for {
+          channelId <- c.get[Option[TextGuildChannelId]]("channelId")
+          ignoredAuditLogEvents <- c.get[Seq[String]]("ignoredAuditLogEvents").flatMap {
+            stringEvents =>
+              stringEvents.traverse {
+                case "GuildUpdate"               => Right(AuditLogEvent.GuildUpdate)
+                case "ChannelCreate"             => Right(AuditLogEvent.ChannelCreate)
+                case "ChannelUpdate"             => Right(AuditLogEvent.ChannelUpdate)
+                case "ChannelDelete"             => Right(AuditLogEvent.ChannelDelete)
+                case "ChannelOverwriteCreate"    => Right(AuditLogEvent.ChannelOverwriteCreate)
+                case "ChannelOverwriteUpdate"    => Right(AuditLogEvent.ChannelOverwriteUpdate)
+                case "ChannelOverwriteDelete"    => Right(AuditLogEvent.ChannelOverwriteDelete)
+                case "MemberKick"                => Right(AuditLogEvent.MemberKick)
+                case "MemberPrune"               => Right(AuditLogEvent.MemberPrune)
+                case "MemberBanAdd"              => Right(AuditLogEvent.MemberBanAdd)
+                case "MemberBanRemove"           => Right(AuditLogEvent.MemberBanRemove)
+                case "MemberUpdate"              => Right(AuditLogEvent.MemberUpdate)
+                case "MemberRoleUpdate"          => Right(AuditLogEvent.MemberRoleUpdate)
+                case "MemberMove"                => Right(AuditLogEvent.MemberMove)
+                case "MemberDisconnect"          => Right(AuditLogEvent.MemberDisconnect)
+                case "BotAdd"                    => Right(AuditLogEvent.BotAdd)
+                case "RoleCreate"                => Right(AuditLogEvent.RoleCreate)
+                case "RoleUpdate"                => Right(AuditLogEvent.RoleUpdate)
+                case "RoleDelete"                => Right(AuditLogEvent.RoleDelete)
+                case "InviteCreate"              => Right(AuditLogEvent.InviteCreate)
+                case "InviteUpdate"              => Right(AuditLogEvent.InviteUpdate)
+                case "InviteDelete"              => Right(AuditLogEvent.InviteDelete)
+                case "WebhookCreate"             => Right(AuditLogEvent.WebhookCreate)
+                case "WebhookUpdate"             => Right(AuditLogEvent.WebhookUpdate)
+                case "WebhookDelete"             => Right(AuditLogEvent.WebhookDelete)
+                case "EmojiCreate"               => Right(AuditLogEvent.EmojiCreate)
+                case "EmojiUpdate"               => Right(AuditLogEvent.EmojiUpdate)
+                case "EmojiDelete"               => Right(AuditLogEvent.EmojiDelete)
+                case "MessageDelete"             => Right(AuditLogEvent.MessageDelete)
+                case "MessageBulkDelete"         => Right(AuditLogEvent.MessageBulkDelete)
+                case "MessagePin"                => Right(AuditLogEvent.MessagePin)
+                case "MessageUnpin"              => Right(AuditLogEvent.MessageUnpin)
+                case "IntegrationCreate"         => Right(AuditLogEvent.IntegrationCreate)
+                case "IntegrationUpdate"         => Right(AuditLogEvent.IntegrationUpdate)
+                case "IntegrationDelete"         => Right(AuditLogEvent.IntegrationDelete)
+                case "StageInstanceCreate"       => Right(AuditLogEvent.StageInstanceCreate)
+                case "StageInstanceUpdate"       => Right(AuditLogEvent.StageInstanceUpdate)
+                case "StageInstanceDelete"       => Right(AuditLogEvent.StageInstanceDelete)
+                case "StickerCreate"             => Right(AuditLogEvent.StickerCreate)
+                case "StickerUpdate"             => Right(AuditLogEvent.StickerUpdate)
+                case "StickerDelete"             => Right(AuditLogEvent.StickerDelete)
+                case "GuildScheduledEventCreate" => Right(AuditLogEvent.GuildScheduledEventCreate)
+                case "GuildScheduledEventUpdate" => Right(AuditLogEvent.GuildScheduledEventUpdate)
+                case "GuildScheduledEventDelete" => Right(AuditLogEvent.GuildScheduledEventDelete)
+                case "ThreadCreate"              => Right(AuditLogEvent.ThreadCreate)
+                case "ThreadUpdate"              => Right(AuditLogEvent.ThreadUpdate)
+                case "ThreadDelete"              => Right(AuditLogEvent.ThreadDelete)
+                case "Unknown"                   => Right(AuditLogEvent.Unknown(Int.MaxValue))
+                case _                           => Left(DecodingFailure("Unknown AuditLogEvent", c.downField("ignoredAuditLogEvents").history))
+              }
+          }
+        } yield ModLog(channelId, ignoredAuditLogEvents),
+      (a: ModLog) =>
+        Json.obj(
+          "channelId" := a.channelId,
+          "ignoredAuditLogEvents" := a.ignoredAuditLogEvents.map {
+            case AuditLogEvent.GuildUpdate               => "GuildUpdate"
+            case AuditLogEvent.ChannelCreate             => "ChannelCreate"
+            case AuditLogEvent.ChannelUpdate             => "ChannelUpdate"
+            case AuditLogEvent.ChannelDelete             => "ChannelDelete"
+            case AuditLogEvent.ChannelOverwriteCreate    => "ChannelOverwriteCreate"
+            case AuditLogEvent.ChannelOverwriteUpdate    => "ChannelOverwriteUpdate"
+            case AuditLogEvent.ChannelOverwriteDelete    => "ChannelOverwriteDelete"
+            case AuditLogEvent.MemberKick                => "MemberKick"
+            case AuditLogEvent.MemberPrune               => "MemberPrune"
+            case AuditLogEvent.MemberBanAdd              => "MemberBanAdd"
+            case AuditLogEvent.MemberBanRemove           => "MemberBanRemove"
+            case AuditLogEvent.MemberUpdate              => "MemberUpdate"
+            case AuditLogEvent.MemberRoleUpdate          => "MemberRoleUpdate"
+            case AuditLogEvent.MemberMove                => "MemberMove"
+            case AuditLogEvent.MemberDisconnect          => "MemberDisconnect"
+            case AuditLogEvent.BotAdd                    => "BotAdd"
+            case AuditLogEvent.RoleCreate                => "RoleCreate"
+            case AuditLogEvent.RoleUpdate                => "RoleUpdate"
+            case AuditLogEvent.RoleDelete                => "RoleDelete"
+            case AuditLogEvent.InviteCreate              => "InviteCreate"
+            case AuditLogEvent.InviteUpdate              => "InviteUpdate"
+            case AuditLogEvent.InviteDelete              => "InviteDelete"
+            case AuditLogEvent.WebhookCreate             => "WebhookCreate"
+            case AuditLogEvent.WebhookUpdate             => "WebhookUpdate"
+            case AuditLogEvent.WebhookDelete             => "WebhookDelete"
+            case AuditLogEvent.EmojiCreate               => "EmojiCreate"
+            case AuditLogEvent.EmojiUpdate               => "EmojiUpdate"
+            case AuditLogEvent.EmojiDelete               => "EmojiDelete"
+            case AuditLogEvent.MessageDelete             => "MessageDelete"
+            case AuditLogEvent.MessageBulkDelete         => "MessageBulkDelete"
+            case AuditLogEvent.MessagePin                => "MessagePin"
+            case AuditLogEvent.MessageUnpin              => "MessageUnpin"
+            case AuditLogEvent.IntegrationCreate         => "IntegrationCreate"
+            case AuditLogEvent.IntegrationUpdate         => "IntegrationUpdate"
+            case AuditLogEvent.IntegrationDelete         => "IntegrationDelete"
+            case AuditLogEvent.StageInstanceCreate       => "StageInstanceCreate"
+            case AuditLogEvent.StageInstanceUpdate       => "StageInstanceUpdate"
+            case AuditLogEvent.StageInstanceDelete       => "StageInstanceDelete"
+            case AuditLogEvent.StickerCreate             => "StickerCreate"
+            case AuditLogEvent.StickerUpdate             => "StickerUpdate"
+            case AuditLogEvent.StickerDelete             => "StickerDelete"
+            case AuditLogEvent.GuildScheduledEventCreate => "GuildScheduledEventCreate"
+            case AuditLogEvent.GuildScheduledEventUpdate => "GuildScheduledEventUpdate"
+            case AuditLogEvent.GuildScheduledEventDelete => "GuildScheduledEventDelete"
+            case AuditLogEvent.ThreadCreate              => "ThreadCreate"
+            case AuditLogEvent.ThreadUpdate              => "ThreadUpdate"
+            case AuditLogEvent.ThreadDelete              => "ThreadDelete"
+            case AuditLogEvent.Unknown(_)                => "Unknown"
+          },
+        )
+    )
   }
 }

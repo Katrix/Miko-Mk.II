@@ -96,7 +96,6 @@ const mutations = {
     Vue.set(state, 'voiceChannels', [...guestState.voiceChannels])
     Vue.set(state, 'categories', [...guestState.categories])
     Vue.set(state, 'roles', [...guestState.roles])
-    Vue.set(state, 'commandData', { ...guestState.commandData })
   },
   setGuildData(state, { data }) {
     state.inVoiceChat = data.inVoiceChat
@@ -105,7 +104,6 @@ const mutations = {
     Vue.set(state, 'voiceChannels', data.voiceChannels)
     Vue.set(state, 'categories', data.categories)
     Vue.set(state, 'roles', data.roles)
-    Vue.set(state, 'commandData', data.commandData)
   },
 }
 
