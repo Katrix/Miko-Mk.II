@@ -60,13 +60,15 @@ lazy val miko = project
       "org.tpolecat" %% "doobie-postgres" % doobieVersion
     ),
     libraryDependencies ++= Seq(
-      "com.github.cb372" %% "scalacache-caffeine" % scalacacheVersion,
+      "com.github.cb372" %% "scalacache-caffeine" % scalacacheVersion
     ),
     libraryDependencies += "org.bouncycastle" % "bcpg-jdk15on"     % "1.69",
     libraryDependencies += "com.vmunier"      %% "scalajs-scripts" % "1.2.0",
     libraryDependencies += "com.lihaoyi"      %% "scalatags"       % "0.9.4",
     libraryDependencies += "com.lihaoyi"      %% "pprint"          % "0.6.6",
     libraryDependencies += "org.scala-lang"   % "scala-compiler"   % scalaVersion.value,
+    libraryDependencies += "ch.qos.logback"   % "logback-classic"  % "1.2.10",
+    dependencyOverrides += "org.slf4j" % "slf4j-api" % "1.7.32",
     Assets / WebKeys.packagePrefix := "public/",
     Runtime / managedClasspath += (Assets / packageBin).value,
     Compile / doc / sources := Seq.empty,
