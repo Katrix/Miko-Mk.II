@@ -7,7 +7,7 @@ import ackcord.gateway.{GatewayEvent, GatewayIntents, GatewaySettings}
 import ackcord.interactions.InteractionsRegistrar
 import ackcord.requests.{BotAuthentication, Ratelimiter, RatelimiterActor, RequestSettings, Requests, SupervisionStreams}
 import ackcord.util.{GuildRouter, Streamable}
-import ackcord.{APIMessage, CacheSnapshot, CacheState, DiscordShard, Events}
+import ackcord.{APIMessage, CacheSnapshot, CacheState, DiscordShard, Events, MemoryCacheSnapshot}
 import akka.Done
 import akka.actor.CoordinatedShutdown
 import akka.actor.typed._
@@ -74,6 +74,17 @@ class MikoRoot(
   }
 
   implicit val events: Events = Events.create(
+    cacheProcessor = MemoryCacheSnapshot.everyN(
+      10,
+      10,
+      MemoryCacheSnapshot.cleanGarbage(
+        keepMessagesFor = 1.day,
+        keepTypedFor = 1.minute,
+        minMessagesPerChannel = 200,
+        minMessages = 5000,
+        alwaysKeep = Set.empty
+      )
+    ),
     ignoredEvents = Seq(
       classOf[GatewayEvent.PresenceUpdate],
       classOf[GatewayEvent.TypingStart],

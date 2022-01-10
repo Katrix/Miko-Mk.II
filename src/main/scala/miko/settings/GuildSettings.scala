@@ -282,6 +282,8 @@ object GuildSettings {
   case class ModLog(
       channelId: Option[TextGuildChannelId] = None,
       ignoredAuditLogEvents: Seq[AuditLogEvent] = Nil,
+      ignoredChannels: Seq[GuildChannelId] = Nil, //TODO: UI for this
+      ignoredUsers: Seq[UserId] = Nil //TODO: UI for this
   )
   object ModLog {
     implicit val codec: Codec[ModLog] = Codec.from(
@@ -342,7 +344,9 @@ object GuildSettings {
                 case _                           => Left(DecodingFailure("Unknown AuditLogEvent", c.downField("ignoredAuditLogEvents").history))
               }
           }
-        } yield ModLog(channelId, ignoredAuditLogEvents),
+          ignoredChannels <- c.get[Seq[GuildChannelId]]("ignoredChannels")
+          ignoredUsers <- c.get[Seq[UserId]]("ignoredUsers")
+        } yield ModLog(channelId, ignoredAuditLogEvents, ignoredChannels, ignoredUsers),
       (a: ModLog) =>
         Json.obj(
           "channelId" := a.channelId,
@@ -396,6 +400,8 @@ object GuildSettings {
             case AuditLogEvent.ThreadDelete              => "ThreadDelete"
             case AuditLogEvent.Unknown(_)                => "Unknown"
           },
+          "ignoredChannels" := a.ignoredChannels,
+          "ignoredUsers" := a.ignoredUsers
         )
     )
   }

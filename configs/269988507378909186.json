@@ -1,1 +1,101 @@
-{"version":"1","channels":{"botSpamChannel":"269988967271759883","staffChannel":null},"music":{"defaultMusicVolume":75},"guildEncryption":{"publicKey":null,"secretKeyChannelId":null,"secretKeyMsgId":null},"voiceText":{"enabled":false,"blacklist":{"channels":[],"categories":[]},"dynamicallyResizeChannels":0,"destructive":{"enabled":false,"blacklist":[],"saveDestroyed":false},"perms":{"global":{"everyone":{"outside":{"allow":[],"deny":[]},"inside":{"allow":[],"deny":[]}},"users":{},"roles":{}},"overrideChannel":{},"overrideCategory":{}}},"commands":{"requiresMention":false,"prefixes":{"general":["m!"],"music":["mm!"]},"permissions":{"general":{"categoryWide":"allow","categoryMergeOperation":"or","cleanup":{"type":"hasPermission","permission":["manage_channels"]},"shiftChannels":{"type":"hasPermission","permission":["manage_channels"]},"info":"allow","safebooru":"allow"},"music":{"categoryWide":"allow","categoryMergeOperation":"or","pause":"allow","volume":"allow","defVolume":"allow","stop":"allow","nowPlaying":"allow","playlist":"allow","queue":"allow","next":"allow","prev":"allow","clear":"allow","shuffle":"allow","ytQueue":"allow","scQueue":"allow","gui":"allow","seek":"allow","loop":"allow"}}},"modLog":{"channelId":"930159524944445552","ignoredAuditLogEvents":[]}}
+{
+    "version": "1",
+    "channels": {
+        "botSpamChannel": "269988967271759883",
+        "staffChannel": null
+    },
+    "music": {
+        "defaultMusicVolume": 75
+    },
+    "guildEncryption": {
+        "publicKey": null,
+        "secretKeyChannelId": null,
+        "secretKeyMsgId": null
+    },
+    "voiceText": {
+        "enabled": false,
+        "blacklist": {
+            "channels": [],
+            "categories": []
+        },
+        "dynamicallyResizeChannels": 0,
+        "destructive": {
+            "enabled": false,
+            "blacklist": [],
+            "saveDestroyed": false
+        },
+        "perms": {
+            "global": {
+                "everyone": {
+                    "outside": {
+                        "allow": [],
+                        "deny": []
+                    },
+                    "inside": {
+                        "allow": [],
+                        "deny": []
+                    }
+                },
+                "users": {},
+                "roles": {}
+            },
+            "overrideChannel": {},
+            "overrideCategory": {}
+        }
+    },
+    "commands": {
+        "requiresMention": false,
+        "prefixes": {
+            "general": [
+                "m!"
+            ],
+            "music": [
+                "mm!"
+            ]
+        },
+        "permissions": {
+            "general": {
+                "categoryWide": "allow",
+                "categoryMergeOperation": "or",
+                "cleanup": {
+                    "type": "hasPermission",
+                    "permission": [
+                        "manage_channels"
+                    ]
+                },
+                "shiftChannels": {
+                    "type": "hasPermission",
+                    "permission": [
+                        "manage_channels"
+                    ]
+                },
+                "info": "allow",
+                "safebooru": "allow"
+            },
+            "music": {
+                "categoryWide": "allow",
+                "categoryMergeOperation": "or",
+                "pause": "allow",
+                "volume": "allow",
+                "defVolume": "allow",
+                "stop": "allow",
+                "nowPlaying": "allow",
+                "playlist": "allow",
+                "queue": "allow",
+                "next": "allow",
+                "prev": "allow",
+                "clear": "allow",
+                "shuffle": "allow",
+                "ytQueue": "allow",
+                "scQueue": "allow",
+                "gui": "allow",
+                "seek": "allow",
+                "loop": "allow"
+            }
+        }
+    },
+    "modLog": {
+        "channelId": "930159524944445552",
+        "ignoredAuditLogEvents": []
+    }
+}

@@ -1,6 +1,7 @@
 package miko.logging
 
-import ackcord.data.SnowflakeType
+import ackcord.commands.MessageParser
+import ackcord.data.{EmbedField, SnowflakeType, UserId}
 import ackcord.requests.{CreateMessage, GetGuildAuditLog, GetGuildAuditLogData}
 import ackcord.{APIMessage, Requests}
 import akka.NotUsed
@@ -22,6 +23,13 @@ object MakeModLog {
         case logElement: LogStream.UserUpdateLogElement => ???
       }
       .filter(t => t._1.channelId.nonEmpty)
+      .filter {
+        case (modLogSettings, logElement) =>
+          logElement.apiMessage match {
+            case apiMessage: APIMessage.ChannelMessage => !modLogSettings.ignoredChannels.contains(apiMessage.channel.id)
+            case _                                     => true
+          }
+      }
       .map {
         case t @ (_, logElement) =>
           val events = logElement.auditLogEvent
@@ -45,8 +53,14 @@ object MakeModLog {
             )
           )
           val embed = logElement.makeEmbed(filteredAuditLog)
+          val userIdParser = MessageParser.userRegex.unanchored
 
-          if(logElement.removeIfEmpty && embed.fields.isEmpty && embed.description.isEmpty) Nil
+          val eventCauser = embed.fields.collectFirst {
+            case EmbedField("Event causer", userIdParser(strId), _) => UserId(strId)
+          }
+
+          if(eventCauser.exists(modLogSettings.ignoredUsers.contains)) Nil
+          else if (logElement.removeIfEmpty && embed.fields.isEmpty && embed.description.isEmpty) Nil
           else List(CreateMessage.mkEmbed(modLogSettings.channelId.get, embed) -> ())
       }
       .via(requests.flowSuccess(ignoreFailures = false))
