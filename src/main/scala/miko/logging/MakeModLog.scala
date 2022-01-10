@@ -26,8 +26,13 @@ object MakeModLog {
       .filter {
         case (modLogSettings, logElement) =>
           logElement.apiMessage match {
-            case apiMessage: APIMessage.ChannelMessage => !modLogSettings.ignoredChannels.contains(apiMessage.channel.id)
-            case _                                     => true
+            case apiMessage: APIMessage.ChannelMessage =>
+              !modLogSettings.ignoredChannels.contains(apiMessage.channel.id)
+            case apiMessage: APIMessage.TextChannelIdMessage =>
+              !modLogSettings.ignoredChannels.contains(apiMessage.channelId)
+            case apiMessage: APIMessage.MessageMessage =>
+              !modLogSettings.ignoredChannels.contains(apiMessage.message.channelId)
+            case _ => true
           }
       }
       .map {
@@ -52,14 +57,14 @@ object MakeModLog {
                   entry.id.creationDate.compareTo(logElement.whenHappened.minusSeconds(3)) > 0
             )
           )
-          val embed = logElement.makeEmbed(filteredAuditLog)
+          val embed        = logElement.makeEmbed(filteredAuditLog)
           val userIdParser = MessageParser.userRegex.unanchored
 
           val eventCauser = embed.fields.collectFirst {
             case EmbedField("Event causer", userIdParser(strId), _) => UserId(strId)
           }
 
-          if(eventCauser.exists(modLogSettings.ignoredUsers.contains)) Nil
+          if (eventCauser.exists(modLogSettings.ignoredUsers.contains)) Nil
           else if (logElement.removeIfEmpty && embed.fields.isEmpty && embed.description.isEmpty) Nil
           else List(CreateMessage.mkEmbed(modLogSettings.channelId.get, embed) -> ())
       }
