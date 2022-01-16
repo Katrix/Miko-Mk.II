@@ -36,6 +36,8 @@ object LogStream {
     .reportLinesUnchanged(true)
     .mergeOriginalRevised(true)
     .inlineDiffByWord(true)
+    .oldTag(f => "~~")
+    .newTag(f => "**")
     .build()
 
   def makeDiff(oldContent: String, newContent: String): String = {
