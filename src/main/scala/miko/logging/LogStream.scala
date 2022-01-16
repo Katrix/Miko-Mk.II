@@ -36,13 +36,17 @@ object LogStream {
     .reportLinesUnchanged(true)
     .mergeOriginalRevised(true)
     .inlineDiffByWord(true)
-    .oldTag(f => "~~")
-    .newTag(f => "**")
+    .oldTag(b => if(b) "\u001b[31m" else "\u001b[0m")
+    .newTag(b => if(b) "\u001b[32m" else "\u001b[0m")
     .build()
 
   def makeDiff(oldContent: String, newContent: String): String = {
     val diffRows = differ.generateDiffRows(oldContent.linesIterator.toSeq.asJava, newContent.linesIterator.toSeq.asJava)
-    diffRows.asScala.map(_.getOldLine).mkString("\n")
+    val diff = diffRows.asScala.map(_.getOldLine).mkString("\n")
+
+    s""""|```ansi
+         |$diff
+         |```""".stripMargin
   }
 
   def findEntryCauseUser(entry: Option[AuditLogEntry])(implicit c: CacheSnapshot, log: AuditLog): Option[User] =
