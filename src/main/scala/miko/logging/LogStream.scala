@@ -44,9 +44,9 @@ object LogStream {
     val diffRows = differ.generateDiffRows(oldContent.linesIterator.toSeq.asJava, newContent.linesIterator.toSeq.asJava)
     val diff = diffRows.asScala.map(_.getOldLine).mkString("\n")
 
-    s""""|```ansi
-         |$diff
-         |```""".stripMargin
+    s"""|```ansi
+        |$diff
+        |```""".stripMargin
   }
 
   def findEntryCauseUser(entry: Option[AuditLogEntry])(implicit c: CacheSnapshot, log: AuditLog): Option[User] =
