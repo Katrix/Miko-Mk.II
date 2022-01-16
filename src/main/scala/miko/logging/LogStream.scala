@@ -5,9 +5,11 @@ import ackcord.requests._
 import ackcord.{APIMessage, CacheSnapshot}
 import akka.NotUsed
 import akka.stream.scaladsl.Flow
+import com.github.difflib.text.DiffRowGenerator
 import miko.util.Color
 
 import java.time.{Instant, OffsetDateTime}
+import scala.jdk.CollectionConverters._
 
 object LogStream {
 
@@ -27,6 +29,22 @@ object LogStream {
       whenHappened: Instant,
       makeEmbed: () => OutgoingEmbed
   ) extends LogElement
+
+  private val differ = DiffRowGenerator
+    .create()
+    .showInlineDiffs(true)
+    .reportLinesUnchanged(true)
+    .mergeOriginalRevised(true)
+    .inlineDiffByWord(true)
+    .build()
+
+  def makeDiff(oldContent: String, newContent: String): String = {
+    val diffRows = differ.generateDiffRows(oldContent.linesIterator.toSeq.asJava, newContent.linesIterator.toSeq.asJava)
+    diffRows.asScala.map(_.getOldLine).mkString("\n")
+  }
+
+  def findEntryCauseUser(entry: Option[AuditLogEntry])(implicit c: CacheSnapshot, log: AuditLog): Option[User] =
+    entry.flatMap(_.userId).flatMap(id => id.resolve.orElse(log.users.find(_.id == id)))
 
   def printChannel(channel: GuildChannel, mentionsWork: Boolean = true): String =
     if (mentionsWork) s"${channel.mention}(#${channel.name})" else s"#${channel.name} (${channel.id.asString})"
@@ -95,6 +113,7 @@ object LogStream {
       }
 
   def auditLogFields[A](
+      apiMessage: APIMessage,
       guild: GatewayGuild,
       log: AuditLog,
       actionType: Seq[AuditLogEvent],
@@ -108,18 +127,17 @@ object LogStream {
     implicit val impLog: AuditLog = log
     getAuditLogEntry(log, actionType, targetId, filterAuditLogEntries).toSeq
       .flatMap { entry =>
-        val standardFields = Seq(
-          entry.reason.filter(_.nonEmpty).map(r => EmbedField("Reason", r)),
-          entry.userId.map(u => EmbedField("Event causer", printUserId(u)))
-        ).flatMap(_.toSeq)
-        val optionalInfoFields = entry.options.map(makeOptionalInfoFields).toSeq.flatten
+        val changes = entry.changes.toSeq.flatten
 
         def printRole(roleId: RoleId): String = LogStream.printRoleId(guild, roleId)
 
         def printChannel(channelId: GuildChannelId): String = LogStream.printChannelId(guild, channelId)
 
         def printUser(userId: UserId): String =
-          log.users.find(_.id == userId).fold(LogStream.printUserId(userId))(LogStream.printUser(_))
+          log.users
+            .find(_.id == userId)
+            .orElse(c.getUser(userId))
+            .fold(LogStream.printUserId(userId))(LogStream.printUser(_))
 
         def printPermissions(newPermissions: Permission, oldPermissions: Permission): String = {
           val permNames = Seq(
@@ -165,27 +183,36 @@ object LogStream {
             Permission.StartEmbeddedActivities -> "StartEmbeddedActivities"
           )
 
-          val changes = permNames
-            .flatMap {
-              case (perm, name) =>
-                val hadBefore = oldPermissions.hasPermissions(perm)
-                val hasNow    = newPermissions.hasPermissions(perm)
+          val changes = permNames.flatMap {
+            case (perm, name) =>
+              val hadBefore = oldPermissions.hasPermissions(perm)
+              val hasNow    = newPermissions.hasPermissions(perm)
 
-                if (hadBefore && hasNow || !hadBefore && !hasNow) Nil
-                else if (hadBefore && !hasNow) Seq(s"-$name")
-                else Seq(s"+$name")
-            }
+              if (hadBefore && hasNow || !hadBefore && !hasNow) Nil
+              else if (hadBefore && !hasNow) Seq(s"-$name")
+              else Seq(s"+$name")
+          }
 
-            if(changes.nonEmpty) changes.mkString("\n") else "None"
+          if (changes.nonEmpty) changes.mkString("\n") else "None"
         }
 
         def printPermissionOverwrite(newOverwrite: PermissionOverwrite, oldOverwrite: PermissionOverwrite): String = {
+          val allow = printPermissions(newOverwrite.allow, oldOverwrite.allow)
+          val deny  = printPermissions(newOverwrite.deny, oldOverwrite.deny)
 
-          s"""|Allow:
-              |${printPermissions(newOverwrite.allow, oldOverwrite.allow)}
-              |
-              |Deny:
-              |${printPermissions(newOverwrite.deny, oldOverwrite.deny)}""".stripMargin
+          val noAllow = allow == "None"
+          val noDeny  = deny == "None"
+
+          if (noAllow && noDeny) "No changes"
+          else if (noAllow) s"Deny:\n$deny"
+          else if (noDeny) s"Allow:\n$deny"
+          else {
+            s"""|Allow:
+                |$allow
+                |
+                |Deny:
+                |$deny""".stripMargin
+          }
         }
 
         def printGuildRequest(makeRequest: (Int, ImageFormat, GuildId, String) => ImageRequest)(hash: String): String =
@@ -216,13 +243,88 @@ object LogStream {
             )
           )
 
-        lazy val changesFields = entry.changes.toSeq.flatten.flatMap {
+        def allowDenyPermissionOverwriteFor(
+            change: AuditLogChange[Permission],
+            accessPerm: PermissionOverwrite => Permission
+        ): String = {
+          apiMessage match {
+            case apiMessage: APIMessage.ChannelMessage =>
+              val channelId  = apiMessage.channel.id.asChannelId[GuildChannel]
+              val oldChannel = channelId.resolve(guild.id)(apiMessage.cache.previous)
+              val newChannel = channelId.resolve(guild.id)(apiMessage.cache.current)
+
+              def filterOverwrites(channel: Option[GuildChannel], optPerm: Option[Permission]) =
+                channel.flatMap(
+                  channel => optPerm.map(perm => channel.permissionOverwrites.filter(t => accessPerm(t._2) == perm))
+                )
+
+              val oldOverwritesOpt = filterOverwrites(oldChannel, change.oldValue)
+              val newOverwritesOpt = filterOverwrites(newChannel, change.newValue)
+
+              val overwrites = (oldOverwritesOpt, newOverwritesOpt) match {
+                case (None, None)             => Nil
+                case (None, Some(overwrites)) => overwrites.values.toSeq
+                case (Some(overwrites), None) => overwrites.values.toSeq
+                case (Some(oldOverwrites), Some(newOverwrites)) =>
+                  val oldKeySet  = oldOverwrites.view.map(t => t._1 -> t._2.`type`).toSet
+                  val newKeySet  = newOverwrites.view.map(t => t._1 -> t._2.`type`).toSet
+                  val bothKeySet = oldKeySet & newKeySet
+
+                  oldOverwrites.view.filter(t => bothKeySet(t._1, t._2.`type`)).values.toSeq
+              }
+
+              val pickedOverwrite =
+                if (overwrites.length <= 1) overwrites.headOption
+                else {
+                  changes
+                    .collect {
+                      case AuditLogChange.Id(oldValue, newValue)
+                          if oldValue.forall(id => overwrites.exists(_.id == id)) ||
+                            newValue.forall(id => overwrites.exists(_.id == id)) =>
+                        val possibleValues = oldValue.toSeq.flatMap(id => overwrites.filter(_.id == id)) ++
+                          newValue.toSeq.flatMap(id => overwrites.filter(_.id == id))
+
+                        //Just pick something if we're still left with multiple options at this point
+                        possibleValues.headOption
+                    }
+                    .flatten
+                    .headOption
+                }
+
+              pickedOverwrite.fold("<unknown>")(
+                overwrite =>
+                  overwrite.`type` match {
+                    case PermissionOverwriteType.Role       => printRoleId(guild, RoleId(overwrite.id), mentionsWork = false)
+                    case PermissionOverwriteType.Member     => printUserId(UserId(overwrite.id), mentionsWork = false)
+                    case PermissionOverwriteType.Unknown(i) => "<unknown type>"
+                  }
+              )
+          }
+        }
+
+        val standardFields = Seq(
+          entry.reason.filter(_.nonEmpty).map(r => EmbedField("Reason", r)),
+          findEntryCauseUser(Some(entry)).map(u => EmbedField("Event causer", printUser(u.id))),
+          apiMessage match {
+            case apiMessage: APIMessage.MessageMessage =>
+              Some(
+                EmbedField(
+                  "Message owner",
+                  apiMessage.message.authorUserId.fold(s"${apiMessage.message.authorUsername} (Webhook)")(printUser)
+                )
+              )
+            case _ => None
+          }
+        ).flatMap(_.toSeq)
+        val optionalInfoFields = entry.options.map(makeOptionalInfoFields).toSeq.flatten
+
+        lazy val changesFields = changes.flatMap {
           case change: AuditLogChange.AfkChannelId => changeFields(change, "afk channel", printChannel)
           case change: AuditLogChange.AfkTimeout   => changeField(change, "afk timeout")
           case change: AuditLogChange.Allow =>
             Seq(
               EmbedField(
-                "Allowed permissions",
+                s"Allowed permissions for ${allowDenyPermissionOverwriteFor(change, _.allow)}",
                 printPermissions(change.oldValue.getOrElse(Permission.None), change.newValue.getOrElse(Permission.None))
               )
             )
@@ -252,7 +354,7 @@ object LogStream {
           case change: AuditLogChange.Deny =>
             Seq(
               EmbedField(
-                "Denied permissions",
+                s"Denied permissions for ${allowDenyPermissionOverwriteFor(change, _.deny)}",
                 printPermissions(change.oldValue.getOrElse(Permission.None), change.newValue.getOrElse(Permission.None))
               )
             )
@@ -278,11 +380,19 @@ object LogStream {
                 )
               }
             }
-          case _: AuditLogChange.Id               => Nil
-          case change: AuditLogChange.InviterId   => changeFields(change, "inviter", printUser)
-          case change: AuditLogChange.Location    => changeField(change, "location")
-          case change: AuditLogChange.Locked      => changeField(change, "locked")
-          case change: AuditLogChange.MaxAge      => changeField(change, "max axe")
+          case _: AuditLogChange.Id             => Nil
+          case change: AuditLogChange.InviterId => changeField(change, "inviter", printUser)
+          case change: AuditLogChange.Location  => changeField(change, "location")
+          case change: AuditLogChange.Locked    => changeField(change, "locked")
+          case change: AuditLogChange.MaxAge =>
+            changeField(
+              change,
+              "max age",
+              (int: Int) =>
+                if (int < 7200) f"${int.toDouble / 60}%.2f minutes"
+                else if (int < 172_800) f"${int.toDouble / 3600}%.2f hours"
+                else f"${int.toDouble / 216_000}%.2f days"
+            )
           case change: AuditLogChange.MaxUses     => changeField(change, "max uses")
           case change: AuditLogChange.Mentionable => changeField(change, "mentionable")
           case change: AuditLogChange.MfaLevel    => changeField(change, "MFA level")
@@ -308,8 +418,8 @@ object LogStream {
             overwriteMap.map {
               case ((tpe, id), (oldPerms, newPerms)) =>
                 val targetStr = tpe match {
-                  case PermissionOverwriteType.Role => printRole(RoleId(id))
-                  case _                            => printUser(UserId(id))
+                  case PermissionOverwriteType.Role => LogStream.printRoleId(guild, RoleId(id), mentionsWork = false)
+                  case _                            => LogStream.printUserId(UserId(id), mentionsWork = false)
                 }
 
                 EmbedField(
@@ -318,6 +428,8 @@ object LogStream {
                 )
             }
           case change: AuditLogChange.Permissions =>
+            ???
+
             Seq(
               EmbedField(
                 "Permissions",
@@ -327,7 +439,7 @@ object LogStream {
           case _: AuditLogChange.Position             => Nil
           case change: AuditLogChange.PreferredLocale => changeField(change, "preferred locale")
           case change: AuditLogChange.PrivacyLevel    => changeField(change, "privacy level")
-          case change: AuditLogChange.PruneDeleteDays => changeField(change, "prunde deletion", (i: Int) => s"$i days")
+          case change: AuditLogChange.PruneDeleteDays => changeField(change, "prune deletion", (i: Int) => s"$i days")
           case change: AuditLogChange.PublicUpdatesChannelId =>
             changeFields(change, "public updates channel", printChannel)
           case change: AuditLogChange.RateLimitPerUser => changeField(change, "ratelimit per user")
@@ -349,8 +461,14 @@ object LogStream {
           case change: AuditLogChange.VerificationLevel => changeField(change, "verification level")
           case _: AuditLogChange.WidgetChannelId        => Nil
           case _: AuditLogChange.WidgetEnabled          => Nil
-          case _: AuditLogChange.$Add                   => Nil
-          case _: AuditLogChange.$Remove                => Nil
+          case add: AuditLogChange.$Add                 =>
+            val newRoles = add.newValue.toSeq.flatten.map(role => s"${role.id.mention} (@${role.name} ${role.id})").mkString("\n")
+            if(newRoles.isEmpty) Nil
+            else List(EmbedField("Added roles", newRoles))
+          case remove: AuditLogChange.$Remove           =>
+            val oldRoles = remove.oldValue.toSeq.flatten.map(role => s"${role.id.mention} (@${role.name} ${role.id})").mkString("\n")
+            if(oldRoles.isEmpty) Nil
+            else List(EmbedField("Removed roles", oldRoles))
         }
 
         val changesFieldsIfWanted = if (printChanges) changesFields else Nil
@@ -379,7 +497,8 @@ object LogStream {
         auditLogEvent,
         Instant.now(),
         implicit log => {
-          val entry     = getAuditLogEntry(log, auditLogEvent, targetId, filterAuditLogEntries)
+          val entry = getAuditLogEntry(log, auditLogEvent, targetId, filterAuditLogEntries)
+
           val causeUser = entry.flatMap(_.userId).flatMap(id => id.resolve.orElse(log.users.find(_.id == id)))
           val embedImage = entry
             .flatMap(_.changes.toList.flatten.collectFirst {
@@ -403,6 +522,7 @@ object LogStream {
             ),
             image = embedImage,
             fields = fields(log) ++ auditLogFields(
+              apiMessage,
               guild,
               log,
               auditLogEvent,
@@ -507,7 +627,8 @@ object LogStream {
         targetId = Some(threadId)
       )
 
-    case apiMessage @ APIMessage.ThreadMembersUpdate(guild, channel, addedMembers, removedMembers, cache, _) => Nil //TODO
+    case apiMessage @ APIMessage.ThreadMembersUpdate(guild, channel, addedMembers, removedMembers, cache, _) =>
+      Nil //TODO
 
     case apiMessage @ APIMessage.ChannelPinsUpdate(Some(guild), channel, _, cache, _) =>
       implicit val c: CacheSnapshot = cache.current
@@ -730,21 +851,34 @@ object LogStream {
       val oldMessage = messageId.resolve(channelId)(cache.previous)
       val newMessage = messageId.resolve(channelId)(cache.current)
 
-      guildLogElement(
-        apiMessage = apiMessage,
-        guild = guild,
-        auditLogEvent = Seq(),
-        title = implicit log =>
-          s"Updated message in ${printChannelId(guild, GuildChannelId(channelId), mentionsWork = false)}",
-        color = Color.Deleted,
-        targetId = Some(messageId),
-        fields = implicit log =>
-          Seq(
-            jumpToMessageField(guild, channelId, messageId),
-            EmbedField("Old content", oldMessage.map(_.content).filter(_.nonEmpty).getOrElse("<unknown>")),
-            EmbedField("New content", newMessage.map(_.content).filter(_.nonEmpty).getOrElse("<unknown>"))
-          )
-      )
+      val oldOptContent = oldMessage.map(_.content).filter(_.nonEmpty)
+      val newOptContent = newMessage.map(_.content).filter(_.nonEmpty)
+
+      if (oldMessage.map(_.content) == newMessage.map(_.content)) Nil
+      else
+        guildLogElement(
+          apiMessage = apiMessage,
+          guild = guild,
+          auditLogEvent = Seq(),
+          title = implicit log =>
+            s"Updated message in ${printChannelId(guild, GuildChannelId(channelId), mentionsWork = false)}",
+          color = Color.Deleted,
+          targetId = Some(messageId),
+          fields = implicit log =>
+            (oldOptContent, newOptContent) match {
+              case (Some(oldContent), Some(newContent)) =>
+                Seq(
+                  EmbedField("Message diff", makeDiff(oldContent, newContent)),
+                  jumpToMessageField(guild, channelId, messageId)
+                )
+              case _ =>
+                Seq(
+                  EmbedField("Old content", oldOptContent.getOrElse("<unknown>")),
+                  EmbedField("New content", newOptContent.getOrElse("<unknown>")),
+                  jumpToMessageField(guild, channelId, messageId)
+                )
+            }
+        )
 
     case apiMessage @ APIMessage.MessageDelete(messageId, Some(guild), channelId, cache, _) =>
       implicit val c: CacheSnapshot = cache.current
@@ -759,7 +893,8 @@ object LogStream {
           s"Deleted message in ${printChannelId(guild, GuildChannelId(channelId), mentionsWork = false)}",
         color = Color.Deleted,
         targetId = Some(messageId),
-        fields = implicit log => Seq(EmbedField("Content", message.map(_.content).filter(_.nonEmpty).getOrElse("<unknown>")))
+        fields =
+          implicit log => Seq(EmbedField("Content", message.map(_.content).filter(_.nonEmpty).getOrElse("<unknown>")))
       )
 
     case apiMessage @ APIMessage.MessageDeleteBulk(messageIds, Some(guild), channelId, cache, _) =>
@@ -774,11 +909,12 @@ object LogStream {
           s"Bulk deleted messages in ${printChannelId(guild, GuildChannelId(channelId), mentionsWork = false)}",
         color = Color.Deleted,
         targetId = None,
-        fields = implicit log => messageIds.map { id =>
-          val message = id.resolve(cache.previous)
-          val from = message.fold("")(m => s" (${m.authorUsername})")
-          EmbedField(s"${id.asString}$from", message.map(_.content).filter(_.nonEmpty).getOrElse("<unknown>"))
-        }
+        fields = implicit log =>
+          messageIds.map { id =>
+            val message = id.resolve(cache.previous)
+            val from    = message.fold("")(m => s" (${m.authorUsername})")
+            EmbedField(s"${id.asString}$from", message.map(_.content).filter(_.nonEmpty).getOrElse("<unknown>"))
+          }
       )
 
     case apiMessage @ APIMessage.MessageReactionRemoveAll(Some(guild), channelId, messageId, cache, _) =>
