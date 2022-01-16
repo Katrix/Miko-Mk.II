@@ -109,7 +109,7 @@ object LogStream {
     getAuditLogEntry(log, actionType, targetId, filterAuditLogEntries).toSeq
       .flatMap { entry =>
         val standardFields = Seq(
-          entry.reason.map(r => EmbedField("Reason", r)),
+          entry.reason.filter(_.nonEmpty).map(r => EmbedField("Reason", r)),
           entry.userId.map(u => EmbedField("Event causer", printUserId(u)))
         ).flatMap(_.toSeq)
         val optionalInfoFields = entry.options.map(makeOptionalInfoFields).toSeq.flatten
@@ -165,7 +165,7 @@ object LogStream {
             Permission.StartEmbeddedActivities -> "StartEmbeddedActivities"
           )
 
-          permNames
+          val changes = permNames
             .flatMap {
               case (perm, name) =>
                 val hadBefore = oldPermissions.hasPermissions(perm)
@@ -175,7 +175,8 @@ object LogStream {
                 else if (hadBefore && !hasNow) Seq(s"-$name")
                 else Seq(s"+$name")
             }
-            .mkString("\n")
+
+            if(changes.nonEmpty) changes.mkString("\n") else "None"
         }
 
         def printPermissionOverwrite(newOverwrite: PermissionOverwrite, oldOverwrite: PermissionOverwrite): String = {
@@ -190,14 +191,17 @@ object LogStream {
         def printGuildRequest(makeRequest: (Int, ImageFormat, GuildId, String) => ImageRequest)(hash: String): String =
           printRequest(makeRequest(1, ImageFormat.PNG, guild.id, hash))
 
+        def changeFieldValue[B](change: Option[B], print: B => String): String =
+          change.map(print).filter(_.nonEmpty).getOrElse("Unknown")
+
         def changeFields[B](
             change: AuditLogChange[B],
             name: String,
             print: B => String = (_: B).toString
         ): Seq[EmbedField] =
           Seq(
-            EmbedField(s"Old $name", change.oldValue.fold("Unknown")(print)),
-            EmbedField(s"New $name", change.newValue.fold("Unknown")(print))
+            EmbedField(s"Old $name", changeFieldValue(change.oldValue, print)),
+            EmbedField(s"New $name", changeFieldValue(change.newValue, print))
           )
 
         def changeField[B](
@@ -208,7 +212,7 @@ object LogStream {
           Seq(
             EmbedField(
               name.capitalize,
-              s"${change.oldValue.fold("Unknown")(print)} -> ${change.newValue.fold("Unknown")(print)}"
+              s"${changeFieldValue(change.oldValue, print)} -> ${changeFieldValue(change.newValue, print)}"
             )
           )
 
@@ -737,8 +741,8 @@ object LogStream {
         fields = implicit log =>
           Seq(
             jumpToMessageField(guild, channelId, messageId),
-            EmbedField("Old content", oldMessage.fold("<unknown>")(_.content)),
-            EmbedField("New content", newMessage.fold("<unknown>")(_.content))
+            EmbedField("Old content", oldMessage.map(_.content).filter(_.nonEmpty).getOrElse("<unknown>")),
+            EmbedField("New content", newMessage.map(_.content).filter(_.nonEmpty).getOrElse("<unknown>"))
           )
       )
 
@@ -755,7 +759,7 @@ object LogStream {
           s"Deleted message in ${printChannelId(guild, GuildChannelId(channelId), mentionsWork = false)}",
         color = Color.Deleted,
         targetId = Some(messageId),
-        fields = implicit log => Seq(EmbedField("Content", message.fold("<unknown>")(_.content)))
+        fields = implicit log => Seq(EmbedField("Content", message.map(_.content).filter(_.nonEmpty).getOrElse("<unknown>")))
       )
 
     case apiMessage @ APIMessage.MessageDeleteBulk(messageIds, Some(guild), channelId, cache, _) =>
@@ -773,7 +777,7 @@ object LogStream {
         fields = implicit log => messageIds.map { id =>
           val message = id.resolve(cache.previous)
           val from = message.fold("")(m => s" (${m.authorUsername})")
-          EmbedField(s"${id.asString}$from", message.fold("<unknown>")(_.content))
+          EmbedField(s"${id.asString}$from", message.map(_.content).filter(_.nonEmpty).getOrElse("<unknown>"))
         }
       )
 

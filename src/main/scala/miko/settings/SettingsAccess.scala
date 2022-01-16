@@ -26,7 +26,7 @@ class SettingsAccess(implicit cache: Cache[IO, GuildId, GuildSettings], environm
 
     val readConfig = IO.blocking(parseConfig(Files.readAllLines(file).asScala.mkString("\n"))).map {
       case Left(e) =>
-        logger.error("Failed to parse config", e)
+        logger.error(s"Failed to parse config for ${guildId.asString}", e)
         GuildSettings()
       case Right(value) => value
     }
