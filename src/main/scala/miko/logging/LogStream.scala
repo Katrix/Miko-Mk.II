@@ -1,5 +1,6 @@
 package miko.logging
 
+import ackcord.data.AuditLogChange.PartialRole
 import ackcord.data._
 import ackcord.requests._
 import ackcord.{APIMessage, CacheSnapshot}
@@ -13,7 +14,13 @@ import scala.jdk.CollectionConverters._
 
 object LogStream {
 
-  sealed trait LogElement
+  sealed trait LogElement {
+    def apiMessage: APIMessage
+    def auditLogEvent: Seq[AuditLogEvent]
+    def whenHappened: Instant
+    //noinspection MutatorLikeMethodIsParameterless
+    def removeIfEmpty: Boolean
+  }
   case class GuildLogElement(
       apiMessage: APIMessage,
       forGuild: GuildId,
@@ -23,11 +30,13 @@ object LogStream {
       removeIfEmpty: Boolean
   )(implicit val c: CacheSnapshot)
       extends LogElement
-  case class UserUpdateLogElement(
+  case class UserLogElement(
       apiMessage: APIMessage,
       userId: UserId,
+      auditLogEvent: Seq[AuditLogEvent],
       whenHappened: Instant,
-      makeEmbed: () => OutgoingEmbed
+      makeEmbed: GatewayGuild => AuditLog => OutgoingEmbed,
+      removeIfEmpty: Boolean
   ) extends LogElement
 
   private val differ = DiffRowGenerator
@@ -36,51 +45,71 @@ object LogStream {
     .reportLinesUnchanged(true)
     .mergeOriginalRevised(true)
     .inlineDiffByWord(true)
-    .oldTag(b => if(b) "\u001b[31m" else "\u001b[0m")
-    .newTag(b => if(b) "\u001b[32m" else "\u001b[0m")
+    .oldTag(b => if (b) "\u001b[31m" else "\u001b[0m")
+    .newTag(b => if (b) "\u001b[32m" else "\u001b[0m")
     .build()
 
   def makeDiff(oldContent: String, newContent: String): String = {
     val diffRows = differ.generateDiffRows(oldContent.linesIterator.toSeq.asJava, newContent.linesIterator.toSeq.asJava)
-    val diff = diffRows.asScala.map(_.getOldLine).mkString("\n")
+    val diff     = diffRows.asScala.map(_.getOldLine).mkString("\n")
 
     s"""|```ansi
         |$diff
         |```""".stripMargin
   }
 
-  def findEntryCauseUser(entry: Option[AuditLogEntry])(implicit c: CacheSnapshot, log: AuditLog): Option[User] =
-    entry.flatMap(_.userId).flatMap(id => id.resolve.orElse(log.users.find(_.id == id)))
+  def findEntryCauseUserId(
+      entry: Option[AuditLogEntry],
+      apiMessage: Option[APIMessage]
+  ): Option[UserId] = entry.flatMap(_.userId).orElse {
+    apiMessage.collect {
+      case message: APIMessage.MessageMessage   => message.message.authorUserId
+      case message: APIMessage.MessageIdMessage => message.message.flatMap(_.authorUserId)
+    }.flatten
+  }
+
+  def findUserWithAuditLog(id: UserId)(implicit c: CacheSnapshot, log: AuditLog): Option[User] =
+    id.resolve.orElse(log.users.find(_.id == id))
+
+  def findEntryCauseUser(
+      entry: Option[AuditLogEntry],
+      apiMessage: Option[APIMessage]
+  )(implicit c: CacheSnapshot, log: AuditLog): Option[User] =
+    findEntryCauseUserId(entry, apiMessage).flatMap(findUserWithAuditLog)
+
+  def printObj(mention: String, id: SnowflakeType[_], prefix: String, name: String, mentionsWork: Boolean): String =
+    if (mentionsWork) s"$mention($prefix$name)" else s"$prefix$name (${id.asString})"
 
   def printChannel(channel: GuildChannel, mentionsWork: Boolean = true): String =
-    if (mentionsWork) s"${channel.mention}(#${channel.name})" else s"#${channel.name} (${channel.id.asString})"
+    printObj(channel.mention, channel.id, "#", channel.name, mentionsWork)
 
   def printChannelId(guild: GatewayGuild, channelId: GuildChannelId, mentionsWork: Boolean = true)(
       implicit auditLog: AuditLog
   ): String = {
-    val channelName = guild.channels
-      .get(channelId)
-      .orElse(auditLog.threads.collectFirst {
-        case channel if channel.id == channelId => channel.toGuildChannel(guild.id, None)
-      }.flatten)
-      .fold("<not found>")(_.name)
-    if (mentionsWork) s"${channelId.mention}(#$channelName)" else s"#$channelName (${channelId.asString})"
+    val channelName =
+      guild.channels
+        .get(channelId)
+        .orElse(auditLog.threads.collectFirst {
+          case channel if channel.id == channelId => channel.toGuildChannel(guild.id, None)
+        }.flatten)
+        .fold("<not found>")(_.name)
+    printObj(channelId.mention, channelId, "#", channelName, mentionsWork)
   }
 
   def printUser(user: User, mentionsWork: Boolean = true): String =
-    if (mentionsWork) s"${user.mention}(@${user.username})" else s"@${user.username} (${user.id.asString})"
+    printObj(user.mention, user.id, "@", user.username, mentionsWork)
 
   def printUserId(id: UserId, mentionsWork: Boolean = true)(implicit c: CacheSnapshot, auditLog: AuditLog): String = {
-    val userName = c.getUser(id).orElse(auditLog.users.find(_.id == id)).fold("<not found>")(_.username)
-    if (mentionsWork) s"${id.mention}(@$userName)" else s"@$userName (${id.asString})"
+    val userName = findUserWithAuditLog(id).fold("<not found>")(_.username)
+    printObj(id.mention, id, "@", userName, mentionsWork)
   }
 
   def printRole(role: Role, mentionsWork: Boolean = true): String =
-    if (mentionsWork) s"${role.mention}(@${role.name})" else s"@${role.name} (${role.id})"
+    printObj(role.mention, role.id, "@", role.name, mentionsWork)
 
   def printRoleId(guild: GatewayGuild, roleId: RoleId, mentionsWork: Boolean = true): String = {
     val roleName = guild.roles.get(roleId).fold("Unknown")(_.name)
-    if (mentionsWork) s"${roleId.mention}(@$roleName)" else s"@$roleName (${roleId.asString})"
+    printObj(roleId.mention, roleId, "@", roleName, mentionsWork)
   }
 
   def printEmoji(emoji: PartialEmoji): String = emoji match {
@@ -112,9 +141,9 @@ object LogStream {
     log.auditLogEntries
       .collectFirst {
         case entry
-            if actionType.contains(entry.actionType) && targetId.forall(entry.targetId.contains) && filterAuditLogEntries(
-              entry
-            ) =>
+            if (actionType.isEmpty || actionType.contains(entry.actionType)) &&
+              targetId.forall(entry.targetId.contains) &&
+              filterAuditLogEntries(entry) =>
           entry
       }
 
@@ -135,15 +164,12 @@ object LogStream {
       .flatMap { entry =>
         val changes = entry.changes.toSeq.flatten
 
-        def printRole(roleId: RoleId): String = LogStream.printRoleId(guild, roleId)
+        def printPartialRole(role: PartialRole, mentionsWork: Boolean = true): String =
+          printObj(role.id.mention, role.id, "@", role.name, mentionsWork)
 
         def printChannel(channelId: GuildChannelId): String = LogStream.printChannelId(guild, channelId)
 
-        def printUser(userId: UserId): String =
-          log.users
-            .find(_.id == userId)
-            .orElse(c.getUser(userId))
-            .fold(LogStream.printUserId(userId))(LogStream.printUser(_))
+        def printUser(userId: UserId): String = LogStream.printUserId(userId)
 
         def printPermissions(newPermissions: Permission, oldPermissions: Permission): String = {
           val permNames = Seq(
@@ -302,7 +328,7 @@ object LogStream {
                   overwrite.`type` match {
                     case PermissionOverwriteType.Role       => printRoleId(guild, RoleId(overwrite.id), mentionsWork = false)
                     case PermissionOverwriteType.Member     => printUserId(UserId(overwrite.id), mentionsWork = false)
-                    case PermissionOverwriteType.Unknown(i) => "<unknown type>"
+                    case PermissionOverwriteType.Unknown(_) => "<unknown type>"
                   }
               )
           }
@@ -310,7 +336,7 @@ object LogStream {
 
         val standardFields = Seq(
           entry.reason.filter(_.nonEmpty).map(r => EmbedField("Reason", r)),
-          findEntryCauseUser(Some(entry)).map(u => EmbedField("Event causer", printUser(u.id))),
+          findEntryCauseUser(Some(entry), None).map(u => EmbedField("Event causer", printUser(u.id))),
           apiMessage match {
             case apiMessage: APIMessage.MessageMessage =>
               Some(
@@ -319,6 +345,13 @@ object LogStream {
                   apiMessage.message.authorUserId.fold(s"${apiMessage.message.authorUsername} (Webhook)")(printUser)
                 )
               )
+            case apiMessage: APIMessage.MessageIdMessage =>
+              apiMessage.message.map { message =>
+                EmbedField(
+                  "Message owner",
+                  message.authorUserId.fold(s"${message.authorUsername} (Webhook)")(printUser)
+                )
+              }
             case _ => None
           }
         ).flatMap(_.toSeq)
@@ -340,14 +373,13 @@ object LogStream {
           case change: AuditLogChange.AutoArchiveDuration => changeField(change, "auto archive duration")
           case change: AuditLogChange.Available           => changeField(change, "sticker availability")
           case change: AuditLogChange.AvatarHash =>
-            entry.userId.toSeq.flatMap(
-              userId =>
-                changeFields(
-                  change,
-                  "avatar",
-                  (hash: String) => printRequest(GetUserAvatarImage(1, ImageFormat.PNG, userId, hash))
-                )
-            )
+            findEntryCauseUserId(Some(entry), Some(apiMessage)).toSeq.flatMap { userId =>
+              changeFields(
+                change,
+                "avatar",
+                (hash: String) => printRequest(GetUserAvatarImage(1, ImageFormat.PNG, userId, hash))
+              )
+            }
           case change: AuditLogChange.BannerHash =>
             changeFields(change, "banner", printGuildRequest(GetGuildBannerImage))
           case change: AuditLogChange.Bitrate                    => changeField(change, "bitrate")
@@ -434,8 +466,6 @@ object LogStream {
                 )
             }
           case change: AuditLogChange.Permissions =>
-            ???
-
             Seq(
               EmbedField(
                 "Permissions",
@@ -467,13 +497,13 @@ object LogStream {
           case change: AuditLogChange.VerificationLevel => changeField(change, "verification level")
           case _: AuditLogChange.WidgetChannelId        => Nil
           case _: AuditLogChange.WidgetEnabled          => Nil
-          case add: AuditLogChange.$Add                 =>
-            val newRoles = add.newValue.toSeq.flatten.map(role => s"${role.id.mention} (@${role.name} ${role.id})").mkString("\n")
-            if(newRoles.isEmpty) Nil
+          case add: AuditLogChange.$Add =>
+            val newRoles = add.newValue.toSeq.flatten.map(printPartialRole(_)).mkString("\n")
+            if (newRoles.isEmpty) Nil
             else List(EmbedField("Added roles", newRoles))
-          case remove: AuditLogChange.$Remove           =>
-            val oldRoles = remove.oldValue.toSeq.flatten.map(role => s"${role.id.mention} (@${role.name} ${role.id})").mkString("\n")
-            if(oldRoles.isEmpty) Nil
+          case remove: AuditLogChange.$Remove =>
+            val oldRoles = remove.oldValue.toSeq.flatten.map(printPartialRole(_, mentionsWork = false)).mkString("\n")
+            if (oldRoles.isEmpty) Nil
             else List(EmbedField("Removed roles", oldRoles))
         }
 
@@ -483,13 +513,64 @@ object LogStream {
       }
   }
 
-  def guildLogElement[A](
+  def makeLogEmbed(
       apiMessage: APIMessage,
       guild: GatewayGuild,
       auditLogEvent: Seq[AuditLogEvent],
       title: AuditLog => String,
       color: Int,
-      targetId: Option[SnowflakeType[A]],
+      targetId: Option[SnowflakeType[_]],
+      fields: AuditLog => Seq[EmbedField] = _ => Nil,
+      filterAuditLogEntries: AuditLogEntry => Boolean = _ => true,
+      printChanges: Boolean = true,
+      makeOptionalInfoFields: AuditLog => OptionalAuditLogInfo => Seq[EmbedField] = _ => _ => Nil
+  )(implicit c: CacheSnapshot, log: AuditLog): OutgoingEmbed = {
+    val entry = getAuditLogEntry(log, auditLogEvent, targetId, filterAuditLogEntries)
+
+    val causeUser = findEntryCauseUser(entry, Some(apiMessage))
+    val embedImage = entry
+      .flatMap(_.changes.toList.flatten.collectFirst {
+        case AuditLogChange.AvatarHash(_, Some(hash)) =>
+          causeUser.map { user =>
+            OutgoingEmbedImage(printRequest(GetUserAvatarImage(256, ImageFormat.WebP, user.id, hash)))
+          }
+      })
+      .flatten
+
+    OutgoingEmbed(
+      title = Some(title(log)),
+      author = causeUser.map { user =>
+        OutgoingEmbedAuthor(
+          name = printUser(user, mentionsWork = false),
+          iconUrl = user.avatar.map { avatarHash =>
+            printRequest(GetUserAvatarImage(64, ImageFormat.WebP, user.id, avatarHash))
+          }
+        )
+      },
+      image = embedImage,
+      fields = fields(log) ++ auditLogFields(
+        apiMessage,
+        guild,
+        log,
+        auditLogEvent,
+        targetId,
+        filterAuditLogEntries,
+        printChanges,
+        makeOptionalInfoFields(log)
+      ),
+      color = Some(color),
+      footer = targetId.map(id => OutgoingEmbedFooter(text = s"ID: ${id.asString}")),
+      timestamp = Some(OffsetDateTime.now())
+    )
+  }
+
+  def guildLogElement(
+      apiMessage: APIMessage,
+      guild: GatewayGuild,
+      auditLogEvent: Seq[AuditLogEvent],
+      title: AuditLog => String,
+      color: Int,
+      targetId: Option[SnowflakeType[_]],
       fields: AuditLog => Seq[EmbedField] = _ => Nil,
       filterAuditLogEntries: AuditLogEntry => Boolean = _ => true,
       printChanges: Boolean = true,
@@ -502,49 +583,56 @@ object LogStream {
         guild.id,
         auditLogEvent,
         Instant.now(),
-        implicit log => {
-          val entry = getAuditLogEntry(log, auditLogEvent, targetId, filterAuditLogEntries)
-
-          val causeUser = entry.flatMap(_.userId).flatMap(id => id.resolve.orElse(log.users.find(_.id == id)))
-          val embedImage = entry
-            .flatMap(_.changes.toList.flatten.collectFirst {
-              case AuditLogChange.AvatarHash(_, Some(hash)) =>
-                causeUser.map(
-                  user => OutgoingEmbedImage(printRequest(GetUserAvatarImage(256, ImageFormat.WebP, user.id, hash)))
-                )
-            })
-            .flatten
-
-          OutgoingEmbed(
-            title = Some(title(log)),
-            author = causeUser.map(
-              user =>
-                OutgoingEmbedAuthor(
-                  name = printUser(user, mentionsWork = false),
-                  iconUrl = user.avatar.map(
-                    avatarHash => printRequest(GetUserAvatarImage(64, ImageFormat.WebP, user.id, avatarHash))
-                  )
-                )
-            ),
-            image = embedImage,
-            fields = fields(log) ++ auditLogFields(
-              apiMessage,
-              guild,
-              log,
-              auditLogEvent,
-              targetId,
-              filterAuditLogEntries,
-              printChanges,
-              makeOptionalInfoFields(log)
-            ),
-            color = Some(color),
-            footer = targetId.map(id => OutgoingEmbedFooter(text = s"ID: ${id.asString}")),
-            timestamp = Some(OffsetDateTime.now())
-          )
-        },
+        implicit log =>
+          makeLogEmbed(
+            apiMessage,
+            guild,
+            auditLogEvent,
+            title,
+            color,
+            targetId,
+            fields,
+            filterAuditLogEntries,
+            printChanges,
+            makeOptionalInfoFields
+          ),
         removeIfNoFields
       )
     )
+
+  def userLogElement(
+      apiMessage: APIMessage,
+      userId: UserId,
+      auditLogEvent: Seq[AuditLogEvent],
+      title: AuditLog => String,
+      color: Int,
+      fields: AuditLog => Seq[EmbedField] = _ => Nil,
+      filterAuditLogEntries: AuditLogEntry => Boolean = _ => true,
+      printChanges: Boolean = true,
+      makeOptionalInfoFields: AuditLog => OptionalAuditLogInfo => Seq[EmbedField] = _ => _ => Nil,
+      removeIfNoFields: Boolean = true
+  )(implicit c: CacheSnapshot): List[UserLogElement] = List(
+    UserLogElement(
+      apiMessage,
+      userId,
+      auditLogEvent,
+      Instant.now(),
+      guild => implicit log =>
+        makeLogEmbed(
+          apiMessage,
+          guild,
+          auditLogEvent,
+          title,
+          color,
+          Some(userId),
+          fields,
+          filterAuditLogEntries,
+          printChanges,
+          makeOptionalInfoFields
+        ),
+      removeIfNoFields
+    )
+  )
 
   def logStream: Flow[APIMessage, LogElement, NotUsed] = Flow[APIMessage].mapConcat {
     case apiMessage @ APIMessage.ChannelCreate(Some(guild), channel, cache, _) =>
@@ -682,14 +770,17 @@ object LogStream {
 
     case apiMessage @ APIMessage.GuildEmojiUpdate(guild, emojis, cache, _) =>
       implicit val c: CacheSnapshot = cache.current
-      //TODO: Print the emojis
       guildLogElement(
         apiMessage = apiMessage,
         guild = guild,
         auditLogEvent = Seq(AuditLogEvent.EmojiCreate, AuditLogEvent.EmojiUpdate, AuditLogEvent.EmojiDelete),
         title = implicit log => s"Emoji update",
         color = Color.Updated,
-        targetId = None
+        targetId = None,
+        fields = _ =>
+          Seq(
+            EmbedField("New emojis", emojis.map(e => s":${e.name}: -> ${e.mention}").mkString("\n"))
+          )
       )
 
     case apiMessage @ APIMessage.GuildStickerUpdate(guild, stickers, cache, _) =>
@@ -750,7 +841,20 @@ object LogStream {
           cache,
           _
         ) =>
-      Nil //TODO
+      //TODO: Less hostile docs for APIMessage.GuildMemberUpdate
+      implicit val c: CacheSnapshot = cache.current
+
+      val old = user.id.resolveMember(guild.id)(cache.previous)
+
+      //TODO: Find out if it detects the changes itself
+      guildLogElement(
+        apiMessage = apiMessage,
+        guild = guild,
+        auditLogEvent = Seq(AuditLogEvent.MemberUpdate),
+        title = implicit log => s"User ${printUser(user, mentionsWork = false)} updated",
+        color = Color.Created,
+        targetId = None
+      )
 
     case apiMessage @ APIMessage.GuildRoleCreate(guild, role, cache, _) =>
       implicit val c: CacheSnapshot = cache.current
@@ -905,8 +1009,6 @@ object LogStream {
 
     case apiMessage @ APIMessage.MessageDeleteBulk(messageIds, Some(guild), channelId, cache, _) =>
       implicit val c: CacheSnapshot = cache.current
-
-      //TODO: Message contents
       guildLogElement(
         apiMessage = apiMessage,
         guild = guild,
@@ -918,7 +1020,8 @@ object LogStream {
         fields = implicit log =>
           messageIds.map { id =>
             val message = id.resolve(cache.previous)
-            val from    = message.fold("")(m => s" (${m.authorUsername})")
+            val from =
+              message.fold("")(m => s" (${m.authorUserId.fold("")(id => s" ${id.mention}")}${m.authorUsername})")
             EmbedField(s"${id.asString}$from", message.map(_.content).filter(_.nonEmpty).getOrElse("<unknown>"))
           }
       )
@@ -951,7 +1054,15 @@ object LogStream {
 
     case apiMessage @ APIMessage.PresenceUpdate(guild, user, presence, cache, _) => Nil //TODO
 
-    case apiMessage @ APIMessage.UserUpdate(user, cache, _) => Nil //TODO
+    case apiMessage @ APIMessage.UserUpdate(user, cache, _) =>
+      implicit val c: CacheSnapshot = cache.current
+      userLogElement(
+        apiMessage = apiMessage,
+        userId = user.id,
+        auditLogEvent = Seq(AuditLogEvent.MemberUpdate),
+        title = _ => s"User ${printUser(user, mentionsWork = false)} updated",
+        color = Color.Updated,
+      )
 
     case apiMessage @ APIMessage.WebhookUpdate(guild, channel, cache, _) =>
       implicit val c: CacheSnapshot = cache.current

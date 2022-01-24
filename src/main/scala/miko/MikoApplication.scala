@@ -109,10 +109,9 @@ class MikoComponents(context: ApplicationLoader.Context)
 
   private def makeCache[K, V]: CaffeineCache[IO, K, V] = CaffeineCache[IO, K, V](Caffeine.newBuilder.build[K, scalacache.Entry[V]]())
 
-  implicit lazy val guildSettingsCache: CaffeineCache[IO, GuildId, GuildSettings] = makeCache
   implicit lazy val memberCache: CaffeineCache[IO, UserId, (User, GuildMember)]   = makeCache
 
-  implicit lazy val settings: SettingsAccess = new SettingsAccess()
+  implicit lazy val settings: SettingsAccess = SettingsAccess().unsafeRunSync()
   implicit lazy val db: DBAccess[IO]         = new DBAccess[IO]()
 
   val ece: ExecutorService = Executors.newFixedThreadPool(32)
