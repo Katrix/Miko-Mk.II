@@ -2,12 +2,13 @@ package miko.settings
 
 import ackcord.data.GuildId
 import cats.effect.IO
-import com.github.benmanes.caffeine.cache.Caffeine
+import com.github.benmanes.caffeine.cache.{CacheLoader, Caffeine}
 import com.google.common.cache.LoadingCache
 import io.circe._
 import io.circe.syntax._
 import org.slf4j.LoggerFactory
 import play.api.Environment
+import scalacache.Entry
 import scalacache.caffeine.CaffeineCache
 
 import java.nio.file.{Files, Path}
@@ -117,11 +118,14 @@ object SettingsAccess {
     )
 
     val unsafeAccess = new UnsafeSettingsAccess(allKnownGuilds)
+    //noinspection ConvertExpressionToSAM
     val cache = CaffeineCache[IO, GuildId, GuildSettings](
       Caffeine.newBuilder
         .expireAfterAccess(30.minutes.toJava)
         .build[GuildId, scalacache.Entry[GuildSettings]](
-          (key: GuildId) => scalacache.Entry(unsafeAccess.getGuildSettingsUncached(key), None)
+          new CacheLoader[GuildId, scalacache.Entry[GuildSettings]] {
+            override def load(key: GuildId): Entry[GuildSettings] = scalacache.Entry(unsafeAccess.getGuildSettingsUncached(key), None)
+          }
         )
     )
 

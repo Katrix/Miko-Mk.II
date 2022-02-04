@@ -302,7 +302,7 @@ object LogStream {
                   val newKeySet  = newOverwrites.view.map(t => t._1 -> t._2.`type`).toSet
                   val bothKeySet = oldKeySet & newKeySet
 
-                  oldOverwrites.view.filter(t => bothKeySet(t._1, t._2.`type`)).values.toSeq
+                  oldOverwrites.view.filter(t => bothKeySet((t._1, t._2.`type`))).values.toSeq
               }
 
               val pickedOverwrite =
@@ -641,7 +641,7 @@ object LogStream {
         apiMessage = apiMessage,
         guild = guild,
         auditLogEvent = Seq(AuditLogEvent.ChannelCreate),
-        title = implicit log => s"Channel ${printChannel(channel, mentionsWork = false)} created",
+        title = _ => s"Channel ${printChannel(channel, mentionsWork = false)} created",
         color = Color.Created,
         targetId = Some(channel.id),
         fields = implicit log =>
@@ -663,7 +663,7 @@ object LogStream {
           AuditLogEvent.ChannelOverwriteUpdate,
           AuditLogEvent.ChannelOverwriteDelete
         ),
-        title = implicit log => s"Channel ${printChannel(channel, mentionsWork = false)} updated",
+        title = _ => s"Channel ${printChannel(channel, mentionsWork = false)} updated",
         color = Color.Updated,
         targetId = Some(channel.id)
       )
@@ -674,7 +674,7 @@ object LogStream {
         apiMessage = apiMessage,
         guild = guild,
         auditLogEvent = Seq(AuditLogEvent.ChannelDelete),
-        title = implicit log => s"Channel ${printChannel(channel, mentionsWork = false)} deleted",
+        title = _ => s"Channel ${printChannel(channel, mentionsWork = false)} deleted",
         color = Color.Deleted,
         targetId = Some(channel.id)
       )
@@ -741,7 +741,7 @@ object LogStream {
         apiMessage = apiMessage,
         guild = guild,
         auditLogEvent = Seq(AuditLogEvent.GuildUpdate),
-        title = implicit log => "Guild updated",
+        title = _ => "Guild updated",
         color = Color.Updated,
         targetId = Some(guild.id)
       )
@@ -752,7 +752,7 @@ object LogStream {
         apiMessage = apiMessage,
         guild = guild,
         auditLogEvent = Seq(AuditLogEvent.MemberBanAdd),
-        title = implicit log => s"Banned ${printUser(user, mentionsWork = false)}",
+        title = _ => s"Banned ${printUser(user, mentionsWork = false)}",
         color = Color.Deleted,
         targetId = Some(user.id)
       )
@@ -763,7 +763,7 @@ object LogStream {
         apiMessage = apiMessage,
         guild = guild,
         auditLogEvent = Seq(AuditLogEvent.MemberBanRemove),
-        title = implicit log => s"Unbanned ${printUser(user, mentionsWork = false)}",
+        title = _ => s"Unbanned ${printUser(user, mentionsWork = false)}",
         color = Color.Created,
         targetId = Some(user.id)
       )
@@ -774,7 +774,7 @@ object LogStream {
         apiMessage = apiMessage,
         guild = guild,
         auditLogEvent = Seq(AuditLogEvent.EmojiCreate, AuditLogEvent.EmojiUpdate, AuditLogEvent.EmojiDelete),
-        title = implicit log => s"Emoji update",
+        title = _ => s"Emoji update",
         color = Color.Updated,
         targetId = None,
         fields = _ =>
@@ -790,7 +790,7 @@ object LogStream {
         apiMessage = apiMessage,
         guild = guild,
         auditLogEvent = Seq(AuditLogEvent.StickerCreate, AuditLogEvent.StickerUpdate, AuditLogEvent.StickerDelete),
-        title = implicit log => s"Sticker update",
+        title = _ => s"Sticker update",
         color = Color.Updated,
         targetId = None
       )
@@ -801,7 +801,7 @@ object LogStream {
         apiMessage = apiMessage,
         guild = guild,
         auditLogEvent = Seq(),
-        title = implicit log => s"Integrations update",
+        title = _ => s"Integrations update",
         color = Color.Updated,
         targetId = None
       )
@@ -812,7 +812,7 @@ object LogStream {
         apiMessage = apiMessage,
         guild = guild,
         auditLogEvent = Seq(),
-        title = implicit log => s"Member joined ${printUser(member.userId.resolve.get, mentionsWork = false)}",
+        title = _ => s"Member joined ${printUser(member.userId.resolve.get, mentionsWork = false)}",
         color = Color.Updated,
         targetId = None
       )
@@ -823,7 +823,7 @@ object LogStream {
         apiMessage = apiMessage,
         guild = guild,
         auditLogEvent = Seq(),
-        title = implicit log => s"Member left ${printUser(user, mentionsWork = false)}",
+        title = _ => s"Member left ${printUser(user, mentionsWork = false)}",
         color = Color.Updated,
         targetId = None
       )
@@ -851,7 +851,7 @@ object LogStream {
         apiMessage = apiMessage,
         guild = guild,
         auditLogEvent = Seq(AuditLogEvent.MemberUpdate),
-        title = implicit log => s"User ${printUser(user, mentionsWork = false)} updated",
+        title = _ => s"User ${printUser(user, mentionsWork = false)} updated",
         color = Color.Created,
         targetId = None
       )
@@ -862,7 +862,7 @@ object LogStream {
         apiMessage = apiMessage,
         guild = guild,
         auditLogEvent = Seq(AuditLogEvent.RoleCreate),
-        title = implicit log => s"Role ${printRole(role, mentionsWork = false)} created",
+        title = _ => s"Role ${printRole(role, mentionsWork = false)} created",
         color = Color.Created,
         targetId = None
       )
@@ -873,7 +873,7 @@ object LogStream {
         apiMessage = apiMessage,
         guild = guild,
         auditLogEvent = Seq(AuditLogEvent.RoleUpdate),
-        title = implicit log => s"Role ${printRole(role, mentionsWork = false)} updated",
+        title = _ => s"Role ${printRole(role, mentionsWork = false)} updated",
         color = Color.Updated,
         targetId = None
       )
@@ -884,7 +884,7 @@ object LogStream {
         apiMessage = apiMessage,
         guild = guild,
         auditLogEvent = Seq(AuditLogEvent.RoleDelete),
-        title = implicit log => s"Role ${printRole(role, mentionsWork = false)} deleted",
+        title = _ => s"Role ${printRole(role, mentionsWork = false)} deleted",
         color = Color.Deleted,
         targetId = None
       )
@@ -895,7 +895,7 @@ object LogStream {
         apiMessage = apiMessage,
         guild = guild,
         auditLogEvent = Seq(AuditLogEvent.GuildScheduledEventCreate),
-        title = implicit log => s"Scheduled event ${scheduledEvent.name} created",
+        title = _ => s"Scheduled event ${scheduledEvent.name} created",
         color = Color.Created,
         targetId = None
       )
@@ -906,7 +906,7 @@ object LogStream {
         apiMessage = apiMessage,
         guild = guild,
         auditLogEvent = Seq(AuditLogEvent.GuildScheduledEventUpdate),
-        title = implicit log => s"Scheduled event ${scheduledEvent.name} updated",
+        title = _ => s"Scheduled event ${scheduledEvent.name} updated",
         color = Color.Updated,
         targetId = None
       )
@@ -917,7 +917,7 @@ object LogStream {
         apiMessage = apiMessage,
         guild = guild,
         auditLogEvent = Seq(AuditLogEvent.GuildScheduledEventDelete),
-        title = implicit log => s"Scheduled event ${scheduledEvent.name} deleted",
+        title = _ => s"Scheduled event ${scheduledEvent.name} deleted",
         color = Color.Deleted,
         targetId = None
       )
@@ -928,7 +928,7 @@ object LogStream {
         apiMessage = apiMessage,
         guild = guild,
         auditLogEvent = Seq(AuditLogEvent.InviteCreate),
-        title = implicit log => "Invite created",
+        title = _ => "Invite created",
         color = Color.Created,
         targetId = None,
         filterAuditLogEntries = entry =>
@@ -944,10 +944,10 @@ object LogStream {
         apiMessage = apiMessage,
         guild = guild,
         auditLogEvent = Seq(AuditLogEvent.InviteDelete),
-        title = implicit log => "Invite deleted",
+        title = _ => "Invite deleted",
         color = Color.Deleted,
         targetId = None,
-        fields = implicit log => Seq(EmbedField("Code", code)),
+        fields = _ => Seq(EmbedField("Code", code)),
         filterAuditLogEntries = entry =>
           entry.changes.exists(_.exists {
             case AuditLogChange.Code(oldValue, newValue) => oldValue.contains(code) || newValue.contains(code)
@@ -974,7 +974,7 @@ object LogStream {
             s"Updated message in ${printChannelId(guild, GuildChannelId(channelId), mentionsWork = false)}",
           color = Color.Deleted,
           targetId = Some(messageId),
-          fields = implicit log =>
+          fields = _ =>
             (oldOptContent, newOptContent) match {
               case (Some(oldContent), Some(newContent)) =>
                 Seq(
@@ -1003,8 +1003,7 @@ object LogStream {
           s"Deleted message in ${printChannelId(guild, GuildChannelId(channelId), mentionsWork = false)}",
         color = Color.Deleted,
         targetId = Some(messageId),
-        fields =
-          implicit log => Seq(EmbedField("Content", message.map(_.content).filter(_.nonEmpty).getOrElse("<unknown>")))
+        fields = _ => Seq(EmbedField("Content", message.map(_.content).filter(_.nonEmpty).getOrElse("<unknown>")))
       )
 
     case apiMessage @ APIMessage.MessageDeleteBulk(messageIds, Some(guild), channelId, cache, _) =>
@@ -1017,7 +1016,7 @@ object LogStream {
           s"Bulk deleted messages in ${printChannelId(guild, GuildChannelId(channelId), mentionsWork = false)}",
         color = Color.Deleted,
         targetId = None,
-        fields = implicit log =>
+        fields = _ =>
           messageIds.map { id =>
             val message = id.resolve(cache.previous)
             val from =
@@ -1036,7 +1035,7 @@ object LogStream {
           s"Removed all reactions from message in ${printChannelId(guild, GuildChannelId(channelId), mentionsWork = false)}",
         color = Color.Deleted,
         targetId = None,
-        fields = implicit log => Seq(jumpToMessageField(guild, channelId, messageId))
+        fields = _ => Seq(jumpToMessageField(guild, channelId, messageId))
       )
 
     case apiMessage @ APIMessage.MessageReactionRemoveEmoji(Some(guild), channelId, messageId, emoji, cache, _) =>
@@ -1049,7 +1048,7 @@ object LogStream {
           s"Removed emoji ${printEmoji(emoji)} from message in ${printChannelId(guild, GuildChannelId(channelId), mentionsWork = false)}",
         color = Color.Deleted,
         targetId = None,
-        fields = implicit log => Seq(jumpToMessageField(guild, channelId, messageId))
+        fields = _ => Seq(jumpToMessageField(guild, channelId, messageId))
       )
 
     case apiMessage @ APIMessage.PresenceUpdate(guild, user, presence, cache, _) => Nil //TODO
@@ -1070,7 +1069,7 @@ object LogStream {
         apiMessage = apiMessage,
         guild = guild,
         auditLogEvent = Seq(AuditLogEvent.WebhookUpdate),
-        title = implicit log => s"Webhook update in ${printChannel(channel, mentionsWork = false)}",
+        title = _ => s"Webhook update in ${printChannel(channel, mentionsWork = false)}",
         color = Color.Updated,
         targetId = None
       )
@@ -1081,7 +1080,7 @@ object LogStream {
         apiMessage = apiMessage,
         guild = guild,
         auditLogEvent = Seq(AuditLogEvent.IntegrationCreate),
-        title = implicit log => s"Integration ${integration.name} added",
+        title = _ => s"Integration ${integration.name} added",
         color = Color.Created,
         targetId = Some(integration.id)
       )
@@ -1092,7 +1091,7 @@ object LogStream {
         apiMessage = apiMessage,
         guild = guild,
         auditLogEvent = Seq(AuditLogEvent.IntegrationUpdate),
-        title = implicit log => s"Integration ${integration.name} updated",
+        title = _ => s"Integration ${integration.name} updated",
         color = Color.Updated,
         targetId = Some(integration.id)
       )
@@ -1103,7 +1102,7 @@ object LogStream {
         apiMessage = apiMessage,
         guild = guild,
         auditLogEvent = Seq(AuditLogEvent.IntegrationDelete),
-        title = implicit log => s"Integration removed",
+        title = _ => s"Integration removed",
         color = Color.Deleted,
         targetId = Some(id)
       )

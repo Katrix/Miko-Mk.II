@@ -1,6 +1,6 @@
 package miko
 
-import ackcord.data.{GuildId, GuildMember, User, UserId}
+import ackcord.data.{GuildMember, User, UserId}
 import ackcord.requests.Requests
 import ackcord.{CacheSnapshot, Streamable}
 import akka.NotUsed

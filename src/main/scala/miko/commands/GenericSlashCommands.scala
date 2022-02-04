@@ -6,7 +6,6 @@ import ackcord.interactions._
 import ackcord.interactions.commands._
 import akka.NotUsed
 import akka.stream.scaladsl.Source
-import cats.effect.IO
 import miko.settings.GuildSettings
 import miko.util.{Crypto, PGPKeys}
 import miko.voicetext.VoiceTextStreams

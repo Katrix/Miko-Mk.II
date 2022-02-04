@@ -5,7 +5,6 @@ import cats.effect.kernel.MonadCancelThrow
 import doobie._
 import doobie.implicits._
 import doobie.postgres.implicits._
-import io.circe._
 import io.circe.syntax._
 import miko.MikoProtocol._
 

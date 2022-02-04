@@ -1,7 +1,15 @@
 package miko.music
 
 import ackcord.data.raw.RawMessage
-import ackcord.data.{ActionRow, GatewayGuild, GuildId, NormalVoiceGuildChannelId, OutgoingEmbed, TextGuildChannel, UserId}
+import ackcord.data.{
+  ActionRow,
+  GatewayGuild,
+  GuildId,
+  NormalVoiceGuildChannelId,
+  OutgoingEmbed,
+  TextGuildChannel,
+  UserId
+}
 import ackcord.syntax._
 import ackcord.{Cache, CacheSnapshot, OptFuture, Requests}
 import akka.actor.typed._
@@ -47,15 +55,18 @@ class GuildMusicHandler(
       vChannelId: NormalVoiceGuildChannelId,
       current: Option[TextGuildChannel]
   ): Future[Option[TextGuildChannel]] = {
-    settings.getGuildSettings(guildId).map { implicit settings =>
-      for {
-        guild <- guildId.resolve(lastCacheSnapshot)
-        ch <- guild
-          .voiceChannelById(vChannelId)
-          .flatMap(VoiceTextStreams.getTextChannel(_, guild).headOption)
-          .orElse(current)
-      } yield ch
-    }.unsafeToFuture()
+    settings
+      .getGuildSettings(guildId)
+      .map { implicit settings =>
+        for {
+          guild <- guildId.resolve(lastCacheSnapshot)
+          ch <- guild
+            .voiceChannelById(vChannelId)
+            .flatMap(VoiceTextStreams.getTextChannel(_, guild).headOption)
+            .orElse(current)
+        } yield ch
+      }
+      .unsafeToFuture()
   }
 
   def createHandler(vChannelId: NormalVoiceGuildChannelId): ActorRef[ChannelMusicHandler.Command] = {
@@ -90,8 +101,8 @@ class GuildMusicHandler(
   def webEventApplicableUsers: Set[UserId] =
     guildId.resolve(lastCacheSnapshot).toSet.flatMap((guild: GatewayGuild) => guild.members.keySet)
 
-  def sendServerEvent(event: ServerMessage): Unit =
-    webEvents.publishSingle(ServerEventWrapper(webEventApplicableUsers, guildId, event))
+  def sendServerEvent(event: ServerMessage, info: GuildMusicHandler.MusicCmdInfo): Unit =
+    webEvents.publishSingle(ServerEventWrapper(webEventApplicableUsers, guildId, event, info.webIdFor))
 
   def updateMusicInfo(info: MusicCmdInfo): Unit = info.cacheSnapshot.foreach { cache =>
     lastCacheSnapshot = cache
@@ -133,11 +144,13 @@ class GuildMusicHandler(
 
       Behaviors.same
 
-    case SetDefaultVolume(volume, sendEmbed, tChannel, cacheSnapshot) =>
+    case SetDefaultVolume(volume, sendEmbed, _, cacheSnapshot) =>
       cacheSnapshot.foreach(lastCacheSnapshot = _)
 
       //sendServerEvent(ServerMessage.UpdateVolume(???, volume))
-      this.settings.updateGuildSettings(guildId, gs => gs.copy(music = gs.music.copy(defaultMusicVolume = volume))).unsafeRunAndForget()
+      this.settings
+        .updateGuildSettings(guildId, gs => gs.copy(music = gs.music.copy(defaultMusicVolume = volume)))
+        .unsafeRunAndForget()
 
       sendEmbed(
         OutgoingEmbed(
@@ -204,7 +217,9 @@ object GuildMusicHandler {
   case class MusicCmdInfo(
       tChannel: Option[TextGuildChannel],
       vChannelId: NormalVoiceGuildChannelId,
-      cacheSnapshot: Option[CacheSnapshot]
+      cacheSnapshot: Option[CacheSnapshot],
+      webId: Option[Long],
+      webIdFor: Option[UserId]
   )
 
   sealed trait Command
@@ -234,6 +249,9 @@ object GuildMusicHandler {
   sealed trait MusicCommand
   object MusicCommand {
     case class Queue(identifier: String)                extends MusicCommand
+    case class SetPlaying(idx: Int)                     extends MusicCommand
+    case class MoveTrack(fromIdx: Int, toIdx: Int)      extends MusicCommand
+    case class RemoveTrack(idx: Int)                    extends MusicCommand
     case object Pause                                   extends MusicCommand
     case class SetPaused(paused: Boolean)               extends MusicCommand
     case class Volume(volume: Int)                      extends MusicCommand

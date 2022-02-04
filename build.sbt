@@ -17,7 +17,7 @@ lazy val sharedSettings = Seq(
     "-Xcheckinit",
     "-Xlint",
     "-Wdead-code",
-    "-Wunused"
+    "-Wunused",
   ),
   resolvers += Opts.resolver.sonatypeSnapshots,
   addCompilerPlugin("org.typelevel" %% "kind-projector" % "0.13.2" cross CrossVersion.full)

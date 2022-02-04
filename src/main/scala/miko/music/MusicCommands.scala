@@ -83,7 +83,7 @@ class MusicCommands(musicHandler: ActorRef[GuildRouter.Command[Nothing, GuildMus
           GuildMusicHandler.GuildMusicCommandWrapper(
             command,
             (embeds, components) => sendAsyncEmbed(embeds, components = components),
-            GuildMusicHandler.MusicCmdInfo(Some(m.textChannel), channel.id, Some(m.cache))
+            GuildMusicHandler.MusicCmdInfo(Some(m.textChannel), channel.id, Some(m.cache), None, None)
           )
         )
       }

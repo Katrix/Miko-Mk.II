@@ -1,6 +1,8 @@
 package miko.web.controllers
 
+import ackcord.OptFuture
 import ackcord.data._
+import ackcord.data.raw.RawMessage
 import ackcord.requests.{GetCurrentUser, OAuth, RequestResponse}
 import ackcord.util.GuildRouter
 import akka.http.scaladsl.model.headers.OAuth2BearerToken
@@ -21,9 +23,9 @@ import miko.settings.{PublicGuildSettings, SettingsAccess}
 import miko.web.WebEvents
 import miko.web.controllers.MikoBaseController.HasMaybeAuthRequest
 import miko.web.models.GuildViewInfo
-import play.api.{Environment, Mode}
 import play.api.http.websocket.TextMessage
 import play.api.mvc._
+import play.api.{Environment, Mode}
 import play.filters.csrf.CSRF
 import play.twirl.api.{Html, StringInterpolation}
 import views.html.helper.CSPNonce
@@ -33,6 +35,7 @@ import java.util.UUID
 import scala.annotation.unused
 import scala.concurrent.Future
 import scala.reflect.ClassTag
+import scala.util.Try
 
 class WebController(
     assetsFinder: AssetsFinder,
@@ -59,7 +62,7 @@ class WebController(
                window.EXTERNAL_CONFIG = {
                  clientId: '${mikoConfig.clientId}',
                  backendUrl: '${self.index.absoluteURL()}',
-                 wsMusicBackendUrl: '${"TODO"/*self.musicWebsocket.absoluteURL()*/}',
+                 wsMusicBackendUrl: '${"TODO" /*self.musicWebsocket.absoluteURL()*/}',
                  production: ${environment.mode == Mode.Prod}
                }
              </script>"""
@@ -301,81 +304,81 @@ class WebController(
     }
   }
 
-  def musicWebsocket(guildIdStr: String): WebSocket = WebSocket { implicit requestHeader =>
+  def musicWebsocket(guildIdStr: String, voiceChannelIdStr: String): WebSocket = WebSocket { implicit requestHeader =>
     import cats.instances.future._
     val eitherRequest =
       EitherT(maybeAuthedAction.refine(Request(requestHeader, ())): Future[Either[Result, MaybeAuthedRequest[Unit]]])
         .flatMapF(authedAction.refineResult)
         .flatMapF(authedGuildRefiner(guildIdStr).refineResult)
+        .subflatMap { guildRequest =>
+          Try(NormalVoiceGuildChannelId(voiceChannelIdStr)).toEither.left
+            .map(_ => NotFound)
+            .filterOrElse(guildRequest.info.userInVChannel.contains, NotFound)
+            .map((guildRequest, _))
+        }
 
-    eitherRequest.map { guildRequest =>
-      val guildId = guildRequest.info.guild.id
+    eitherRequest.map {
+      case (guildRequest, voiceChannelId) =>
+        val guildId = guildRequest.info.guild.id
 
-      val flowGraph = GraphDSL.create() { implicit builder =>
-        import GraphDSL.Implicits._
+        val flowGraph = GraphDSL.create() { implicit builder =>
+          import GraphDSL.Implicits._
 
-        val serverEvents: SourceShape[TextMessage] =
-          builder.add(
-            webEvents.subscribe
-              .filter(_.applicableUsers.contains(guildRequest.info.user.id))
-              .filter(_.guildId == guildId)
-              .map(_.event)
-              .map(_.asJson.noSpaces)
-              .map(s => TextMessage(s))
+          val serverEvents: SourceShape[TextMessage] =
+            builder.add(
+              webEvents.subscribe
+                .filter(_.applicableUsers.contains(guildRequest.info.user.id))
+                .filter(_.guildId == guildId)
+                .map(wrapper => wrapper.event.includeWebIdIf(wrapper.webIdFor.contains(guildRequest.info.user.id)))
+                .map(_.asJson.noSpaces)
+                .map(s => TextMessage(s))
+            )
+
+          val clientMessages: FlowShape[play.api.http.websocket.Message, ClientMessage] = builder.add(
+            Flow[play.api.http.websocket.Message]
+              .flatMapConcat {
+                case TextMessage(text) => Source.single(parser.parse(text).flatMap(_.as[ClientMessage]))
+                case _                 => ???
+              }
+              .flatMapConcat {
+                case Left(e)      => Source.failed(e)
+                case Right(value) => Source.single(value)
+              }
           )
 
-        val clientMessages: FlowShape[play.api.http.websocket.Message, ClientMessage] = builder.add(
-          Flow[play.api.http.websocket.Message]
-            .flatMapConcat {
-              case TextMessage(text) => Source.single(parser.parse(text).flatMap(_.as[ClientMessage]))
-              case _                 => ???
-            }
-            .flatMapConcat {
-              case Left(e)      => Source.failed(e)
-              case Right(value) => Source.single(value)
-            }
-        )
+          var webId = -1
 
-        val musicClientMessage = builder.add(
-          Flow[ClientMessage]
-            .map {
-              case ClientMessage.SetPaused(paused) =>
-                GuildRouter.SendToGuildActor(
-                  guildId,
-                  GuildMusicHandler.GuildMusicCommandWrapper(GuildMusicHandler.MusicCommand.SetPaused(paused), ???, ???)
-                )
-              case ClientMessage.UpdateVolume(volume, defVolume) =>
-                GuildRouter.SendToGuildActor(
-                  guildId,
-                  GuildMusicHandler
-                    .GuildMusicCommandWrapper(GuildMusicHandler.MusicCommand.VolumeBoth(volume, defVolume), ???, ???)
-                )
-              case ClientMessage.SetPosition(position) =>
-                GuildRouter.SendToGuildActor(
-                  guildId,
-                  GuildMusicHandler
-                    .GuildMusicCommandWrapper(GuildMusicHandler.MusicCommand.Seek(position, useOffset = false), ???, ???)
-                )
-              case ClientMessage.SetTrackPlaying(idx, position) =>
-                GuildRouter.SendToGuildActor(
-                  guildId,
-                  GuildMusicHandler.GuildMusicCommandWrapper(???, ???, ???)
-                )
-              case ClientMessage.SetPlaylist(playlist) =>
-                GuildRouter.SendToGuildActor(
-                  guildId,
-                  GuildMusicHandler.GuildMusicCommandWrapper(???, ???, ???)
-                )
-            }
-            .to(Sink.foreach(???))
-        )
+          def musicCmdInfo: GuildMusicHandler.MusicCmdInfo = {
+            webId = webId + 1
+            GuildMusicHandler.MusicCmdInfo(None, voiceChannelId, None, Some(webId), Some(guildRequest.info.user.id))
+          }
 
-        clientMessages ~> musicClientMessage
+          def sendMessage(embeds: Seq[OutgoingEmbed], rows: Seq[ActionRow]): OptFuture[RawMessage] = ???
 
-        FlowShape(clientMessages.in, serverEvents.out)
-      }
+          val musicClientMessage = builder.add(
+            Flow[ClientMessage]
+              .map {
+                case ClientMessage.SetPosition(position) =>
+                  GuildMusicHandler.MusicCommand.Seek(position, useOffset = false)
+                case ClientMessage.SetPaused(paused) => GuildMusicHandler.MusicCommand.SetPaused(paused)
+                case ClientMessage.UpdateVolume(volume, defVolume) =>
+                  GuildMusicHandler.MusicCommand.VolumeBoth(volume, defVolume)
+                case ClientMessage.SetTrackPlaying(idx)      => GuildMusicHandler.MusicCommand.SetPlaying(idx)
+                case ClientMessage.QueueTrack(url)           => GuildMusicHandler.MusicCommand.Queue(url)
+                case ClientMessage.MoveTrack(fromIdx, toIdx) => GuildMusicHandler.MusicCommand.MoveTrack(fromIdx, toIdx)
+                case ClientMessage.RemoveTrack(idx)          => GuildMusicHandler.MusicCommand.RemoveTrack(idx)
+              }
+              .map(GuildMusicHandler.GuildMusicCommandWrapper(_, sendMessage, musicCmdInfo))
+              .map(GuildRouter.SendToGuildActor(guildId, _))
+              .to(Sink.foreach(???))
+          )
 
-      Flow.fromGraph(flowGraph)
+          clientMessages ~> musicClientMessage
+
+          FlowShape(clientMessages.in, serverEvents.out)
+        }
+
+        Flow.fromGraph(flowGraph)
     }.value
   }
 }

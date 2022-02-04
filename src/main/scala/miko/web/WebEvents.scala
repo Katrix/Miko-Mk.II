@@ -25,7 +25,7 @@ case class WebEvents(publish: Sink[ServerEventWrapper, NotUsed], subscribe: Sour
 }
 object WebEvents {
 
-  case class ServerEventWrapper(applicableUsers: Set[UserId], guildId: GuildId, event: ServerMessage)
+  case class ServerEventWrapper(applicableUsers: Set[UserId], guildId: GuildId, event: ServerMessage, webIdFor: Option[UserId])
 
   def create(implicit mat: Materializer): WebEvents = {
     val (sink, source) = MergeHub

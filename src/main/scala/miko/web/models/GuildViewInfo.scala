@@ -1,11 +1,11 @@
 package miko.web.models
 
 import ackcord.CacheSnapshot
-import ackcord.data.{GatewayGuild, GuildId, GuildMember, User}
+import ackcord.data.{GatewayGuild, GuildId, GuildMember, User, VoiceGuildChannelId}
 
 case class GuildViewInfo(
     guildId: GuildId,
-    userInVChannel: Boolean,
+    userInVChannel: Option[VoiceGuildChannelId],
     isAdmin: Boolean,
     guild: GatewayGuild,
     member: GuildMember,

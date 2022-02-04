@@ -80,6 +80,9 @@ class ChannelMusicController(
     c => GlobalRegisteredComponents.addHandler(s"${emojiIdentifierPrefix}_${c.identifier}", guiHandler)
   )
 
+  def dummyMusicCmdInfo: GuildMusicHandler.MusicCmdInfo =
+    GuildMusicHandler.MusicCmdInfo(None, vChannelId, None, None, None)
+
   private val killswitchUpdates = cache.subscribeAPI
     .viaMat(KillSwitches.single)(Keep.right)
     .collect {
@@ -108,15 +111,18 @@ class ChannelMusicController(
   timers.startTimerWithFixedDelay("CheckContinue", CheckContinuePlay, 1.minute)
 
   def textChannel(current: Option[TextGuildChannel]): Future[Option[TextGuildChannel]] = {
-    settings.getGuildSettings(guildId).map { implicit settings =>
-      for {
-        guild <- guildId.resolve(lastCacheSnapshot)
-        ch <- guild
-          .voiceChannelById(vChannelId)
-          .flatMap(VoiceTextStreams.getTextChannel(_, guild).headOption)
-          .orElse(current)
-      } yield ch
-    }.unsafeToFuture()
+    settings
+      .getGuildSettings(guildId)
+      .map { implicit settings =>
+        for {
+          guild <- guildId.resolve(lastCacheSnapshot)
+          ch <- guild
+            .voiceChannelById(vChannelId)
+            .flatMap(VoiceTextStreams.getTextChannel(_, guild).headOption)
+            .orElse(current)
+        } yield ch
+      }
+      .unsafeToFuture()
   }
 
   def webEventApplicableUsers: Set[UserId] =
@@ -127,8 +133,8 @@ class ChannelMusicController(
       .map(_.id)
       .toSet
 
-  def sendServerEvent(event: ServerMessage): Unit =
-    webEvents.publishSingle(ServerEventWrapper(webEventApplicableUsers, guildId, event))
+  def sendServerEvent(event: ServerMessage, info: GuildMusicHandler.MusicCmdInfo): Unit =
+    webEvents.publishSingle(ServerEventWrapper(webEventApplicableUsers, guildId, event, info.webIdFor))
 
   def sendMessage(
       info: Option[GuildMusicHandler.MusicCmdInfo],
@@ -147,7 +153,7 @@ class ChannelMusicController(
 
   override def onMessage(msg: Command): Behavior[Command] = msg match {
     case StartShutdown =>
-      stopMusic()
+      stopMusic(dummyMusicCmdInfo)
       Behaviors.same
 
     case Shutdown =>
@@ -163,7 +169,7 @@ class ChannelMusicController(
         )
       )
       log.error("Shutting down music because of error", e)
-      stopMusic()
+      stopMusic(dummyMusicCmdInfo)
       Behaviors.same
 
     case UpdatesDone =>
@@ -174,7 +180,7 @@ class ChannelMusicController(
           color = Some(Color.Warning)
         )
       )
-      stopMusic()
+      stopMusic(dummyMusicCmdInfo)
       Behaviors.same
 
     case VChannelMoved(newVChannelId) =>
@@ -189,25 +195,25 @@ class ChannelMusicController(
 
     case CheckContinuePlay =>
       if (player.getPlayingTrack == null) {
-        stopMusic()
+        stopMusic(dummyMusicCmdInfo)
       }
 
       Behaviors.same
 
-    case QueuedItemResult(AudioItemLoader.LoadedPlaylist(playlist), sendInteractionEmbed, _) =>
+    case QueuedItemResult(AudioItemLoader.LoadedPlaylist(playlist), sendInteractionEmbed, info) =>
       if (playlist.isSearchResult) {
         Option(playlist.getSelectedTrack)
           .orElse(playlist.getTracks.asScala.headOption)
-          .foreach(addTrack)
+          .foreach(addTrack(_, info))
       } else {
-        addTracks(playlist.getTracks.asScala.toSeq: _*)
+        addTracks(info)(playlist.getTracks.asScala.toSeq: _*)
       }
 
       sendInteractionEmbed(Seq(playlistQueueMessage(playlist)), Nil)
       Behaviors.same
 
-    case QueuedItemResult(AudioItemLoader.LoadedTrack(track), sendInteractionEmbed, _) =>
-      addTrack(track)
+    case QueuedItemResult(AudioItemLoader.LoadedTrack(track), sendInteractionEmbed, info) =>
+      addTrack(track, info)
       sendInteractionEmbed(Seq(trackQueueMessage(track)), Nil)
       Behaviors.same
 
@@ -229,7 +235,7 @@ class ChannelMusicController(
     case LavaplayerEvent(_: PlayerResumeEvent) => Behaviors.same //NO-OP
     case LavaplayerEvent(_: PlayerPauseEvent)  => Behaviors.same //NO-OP
     case LavaplayerEvent(event: TrackStartEvent) =>
-      sendServerEvent(ServerMessage.SetTrackPlaying(event.track.getUserData.asInstanceOf[Long].toInt, 0))
+      sendServerEvent(ServerMessage.SetTrackPlaying(currentTrackIdx, 0, None), dummyMusicCmdInfo)
 
       sendEmbed(
         None,
@@ -266,7 +272,7 @@ class ChannelMusicController(
       if (event.endReason.mayStartNext) {
         nextTrack()
       } else if (event.endReason != AudioTrackEndReason.REPLACED) {
-        stopMusic()
+        stopMusic(dummyMusicCmdInfo)
       }
       Behaviors.same
 
@@ -320,6 +326,8 @@ class ChannelMusicController(
       lazy val playingTrack = player.getPlayingTrack
       lazy val hasTrack     = playingTrack != null
 
+      val webId = info.webId
+
       command match {
         case Queue(identifier) =>
           loader ! AudioItemLoader
@@ -327,9 +335,52 @@ class ChannelMusicController(
 
           Behaviors.same
 
+        case SetPlaying(idx) =>
+          playTrackAtIdx(idx)
+          sendStandardEmbed(s"Jumping to track ${playlist(currentTrackIdx).getInfo.title}")
+          Behaviors.same
+
+        case MoveTrack(fromIdx, toIdx) =>
+          val clampedToIdx = math.max(0, math.min(playlist.length - 1, toIdx))
+
+          if (playlist.isDefinedAt(fromIdx)) {
+            val track = playlist(fromIdx)
+
+            playlist.insert(clampedToIdx, track)
+            playlist.remove(fromIdx)
+
+            if (currentTrackIdx == fromIdx) {
+              currentTrackIdx = clampedToIdx
+            }
+
+            sendStandardEmbed(s"Moved track ${track.getInfo.title}")
+            sendServerEvent(ServerMessage.MovedTrack(fromIdx, toIdx, webId), info)
+          }
+
+          Behaviors.same
+
+        case RemoveTrack(idx) =>
+          if (playlist.isDefinedAt(idx)) {
+            val track = playlist(idx)
+
+            if (playlist.size == 1) {
+              removeAllTracks()
+            } else {
+              if (currentTrackIdx == idx) {
+                nextTrack()
+              }
+              playlist.remove(idx)
+            }
+
+            sendStandardEmbed(s"Removed track ${track.getInfo.title} from the playlist", color = Color.Red)
+            sendServerEvent(ServerMessage.RemovedTrack(idx, webId), info)
+          }
+
+          Behaviors.same
+
         case Pause =>
           player.setPaused(!player.isPaused)
-          sendServerEvent(ServerMessage.SetPaused(player.isPaused))
+          sendServerEvent(ServerMessage.SetPaused(player.isPaused, webId), info)
           sendStandardEmbed(
             message = if (player.isPaused) "Paused" else "Unpaused",
             color = if (player.isPaused) Color.Red else Color.Green
@@ -338,7 +389,7 @@ class ChannelMusicController(
 
         case SetPaused(paused) =>
           player.setPaused(paused)
-          sendServerEvent(ServerMessage.SetPaused(player.isPaused))
+          sendServerEvent(ServerMessage.SetPaused(player.isPaused, webId), info)
           sendStandardEmbed(
             message = if (paused) "Paused" else "Unpaused",
             color = if (paused) Color.Red else Color.Green
@@ -347,21 +398,23 @@ class ChannelMusicController(
 
         case Volume(volume) =>
           player.setVolume(volume)
-          //sendServerEvent(ServerMessage.UpdateVolume(volume, ???))
+          sendServerEvent(ServerMessage.UpdatedVolume(Some(volume), None, webId), info)
           sendStandardEmbed(s"Set volume to ${player.getVolume}", color = Color.forVolume(volume))
           Behaviors.same
 
         case VolumeBoth(volume, defVolume) =>
           player.setVolume(volume)
 
-          this.settings.updateGuildSettings(guildId, gs => gs.copy(music = gs.music.copy(defaultMusicVolume = defVolume))).unsafeRunAndForget()
+          this.settings
+            .updateGuildSettings(guildId, gs => gs.copy(music = gs.music.copy(defaultMusicVolume = defVolume)))
+            .unsafeRunAndForget()
 
-          //sendServerEvent(ServerMessage.UpdateVolume(volume, ???))
+          sendServerEvent(ServerMessage.UpdatedVolume(Some(volume), Some(defVolume), webId), info)
           sendStandardEmbed(s"Set volume to ${player.getVolume}", color = Color.forVolume(volume))
           Behaviors.same
 
         case Stop =>
-          stopMusic()
+          stopMusic(info)
           sendStandardEmbed("Stopped music")
           Behaviors.same
 
@@ -475,13 +528,13 @@ class ChannelMusicController(
           Behaviors.same
 
         case Clear =>
-          sendServerEvent(ServerMessage.SetPlaylist(Nil))
+          sendServerEvent(ServerMessage.SetPlaylist(Nil, webId), info)
           removeAllTracks()
           sendStandardEmbed("Cleared the playlist")
           Behaviors.same
 
         case Shuffle =>
-          shuffleTracks()
+          shuffleTracks(info)
           sendStandardEmbed("Shuffled the playlist")
           Behaviors.same
 
@@ -493,7 +546,7 @@ class ChannelMusicController(
             val position = if (useOffset) playingTrack.getPosition + millisProgress else millisProgress
 
             playingTrack.setPosition(position)
-            sendServerEvent(ServerMessage.SetPosition(position / 1000))
+            sendServerEvent(ServerMessage.SetPosition(position / 1000, webId), info)
             s"Set current progress to ${MusicHelper.formatDuration(position)}"
           } else {
             "No track playing"
@@ -504,7 +557,7 @@ class ChannelMusicController(
 
         case ToggleLoop =>
           shouldLoop = !shouldLoop
-          sendServerEvent(ServerMessage.SetLoop(shouldLoop))
+          sendServerEvent(ServerMessage.SetLoop(shouldLoop, webId), info)
 
           //TODO: Set color from state
           sendStandardEmbed("Toggled looping", Color.Success)
@@ -563,16 +616,16 @@ class ChannelMusicController(
     }
   }
 
-  def stopMusic(): Unit = {
-    sendServerEvent(ServerMessage.MusicStopping)
+  def stopMusic(info: GuildMusicHandler.MusicCmdInfo): Unit = {
+    sendServerEvent(ServerMessage.MusicStopping(info.webId), info)
     player.stopTrack()
     killswitchUpdates.shutdown()
     GlobalRegisteredComponents.removeHandler(guiHandler)
     context.self ! Shutdown
   }
 
-  def addTrack(track: AudioTrack): Unit = {
-    sendServerEvent(ServerMessage.AddTracks(Seq(musicEntryForTrack(track))))
+  def addTrack(track: AudioTrack, info: GuildMusicHandler.MusicCmdInfo): Unit = {
+    sendServerEvent(ServerMessage.AddTracks(Seq(musicEntryForTrack(track)), info.webId), info)
 
     playlist += track
 
@@ -581,9 +634,9 @@ class ChannelMusicController(
     }
   }
 
-  def addTracks(tracks: AudioTrack*): Unit = {
-    addTrack(tracks.head)
-    sendServerEvent(ServerMessage.AddTracks(tracks.tail.map(musicEntryForTrack)))
+  def addTracks(info: GuildMusicHandler.MusicCmdInfo)(tracks: AudioTrack*): Unit = {
+    addTrack(tracks.head, info)
+    sendServerEvent(ServerMessage.AddTracks(tracks.tail.map(musicEntryForTrack), info.webId), info)
 
     playlist ++= tracks.tail
   }
@@ -595,7 +648,10 @@ class ChannelMusicController(
 
   def moveTrack(offset: Int): Unit = {
     val idx = if (shouldLoop) (currentTrackIdx + offset) % playlist.size else currentTrackIdx + offset
+    playTrackAtIdx(idx)
+  }
 
+  def playTrackAtIdx(idx: Int): Unit = {
     if (playlist.isDefinedAt(idx)) {
       val item = playlist(idx)
 
@@ -608,14 +664,14 @@ class ChannelMusicController(
     }
   }
 
-  def shuffleTracks(): Unit = {
+  def shuffleTracks(info: GuildMusicHandler.MusicCmdInfo): Unit = {
     val res = scala.util.Random.javaRandomToRandom(ThreadLocalRandom.current()).shuffle(playlist)
 
     playlist.clear()
     playlist ++= res
     currentTrackIdx = -1
 
-    sendServerEvent(ServerMessage.SetPlaylist(res.map(musicEntryForTrack).toSeq))
+    sendServerEvent(ServerMessage.SetPlaylist(res.map(musicEntryForTrack).toSeq, info.webId), info)
 
     nextTrack()
   }
@@ -637,7 +693,8 @@ object ChannelMusicController {
           replyTo ! ChannelMusicCommandWrapper(
             command,
             (embeds, components) => sendAsyncEmbed(embeds, components = components),
-            GuildMusicHandler.MusicCmdInfo(Some(interaction.textChannel), vChannelId, Some(interaction.cache))
+            GuildMusicHandler
+              .MusicCmdInfo(Some(interaction.textChannel), vChannelId, Some(interaction.cache), None, None)
           )
         }
       }

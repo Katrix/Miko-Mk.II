@@ -119,7 +119,7 @@ trait MikoBaseController extends BaseController with I18nSupport with CircePlayC
             .map { case (user, member) =>
               GuildViewInfo(
                 guildId,
-                guild.voiceStates.get(member.userId).flatMap(_.channelId).isDefined,
+                guild.voiceStates.get(member.userId).flatMap(_.channelId),
                 member.permissions(guild).hasPermissions(Permission.Administrator),
                 guild,
                 member,
