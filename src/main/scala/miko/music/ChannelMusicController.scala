@@ -61,6 +61,8 @@ class ChannelMusicController(
   private val msgQueue: SourceQueueWithComplete[Request[RawMessage]] =
     requests.sinkIgnore[RawMessage].runWith(Source.queue(128, OverflowStrategy.dropHead))
 
+  private var stopping: Boolean = false
+
   private var currentTrackIdx: Int                 = -1
   private val playlist: mutable.Buffer[AudioTrack] = mutable.Buffer.empty
   private var shouldLoop: Boolean                  = false
@@ -617,11 +619,14 @@ class ChannelMusicController(
   }
 
   def stopMusic(info: GuildMusicHandler.MusicCmdInfo): Unit = {
-    sendServerEvent(ServerMessage.MusicStopping(info.webId), info)
-    player.stopTrack()
-    killswitchUpdates.shutdown()
-    GlobalRegisteredComponents.removeHandler(guiHandler)
-    context.self ! Shutdown
+    if (!stopping) {
+      stopping = true
+      sendServerEvent(ServerMessage.MusicStopping(info.webId), info)
+      player.stopTrack()
+      killswitchUpdates.shutdown()
+      GlobalRegisteredComponents.removeHandler(guiHandler)
+      context.self ! Shutdown
+    }
   }
 
   def addTrack(track: AudioTrack, info: GuildMusicHandler.MusicCmdInfo): Unit = {
