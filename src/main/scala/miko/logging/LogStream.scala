@@ -9,6 +9,8 @@ import akka.stream.scaladsl.Flow
 import com.github.difflib.text.DiffRowGenerator
 import miko.util.Color
 
+import java.time.format.{DateTimeFormatter, FormatStyle}
+import java.time.temporal.ChronoUnit
 import java.time.{Instant, OffsetDateTime}
 import scala.jdk.CollectionConverters._
 
@@ -57,6 +59,8 @@ object LogStream {
         |$diff
         |```""".stripMargin
   }
+
+  private val dateTimeFormatter = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM)
 
   def findEntryCauseUserId(
       entry: Option[AuditLogEntry],
@@ -528,7 +532,7 @@ object LogStream {
     val entry = getAuditLogEntry(log, auditLogEvent, targetId, filterAuditLogEntries)
 
     val causeUser = findEntryCauseUser(entry, Some(apiMessage))
-    val embedImage = entry
+    val newAvatarEmbedImage = entry
       .flatMap(_.changes.toList.flatten.collectFirst {
         case AuditLogChange.AvatarHash(_, Some(hash)) =>
           causeUser.map { user =>
@@ -536,6 +540,16 @@ object LogStream {
           }
       })
       .flatten
+
+    val joinLeaveEmbedImage = apiMessage match {
+      case _: APIMessage.GuildMemberAdd | _: APIMessage.GuildMemberRemove =>
+        for {
+          user <- causeUser
+          hash <- user.avatar
+        } yield OutgoingEmbedImage(printRequest(GetUserAvatarImage(256, ImageFormat.WebP, user.id, hash)))
+      case _ => None
+    }
+
 
     OutgoingEmbed(
       title = Some(title(log)),
@@ -547,7 +561,7 @@ object LogStream {
           }
         )
       },
-      image = embedImage,
+      image = newAvatarEmbedImage.orElse(joinLeaveEmbedImage),
       fields = fields(log) ++ auditLogFields(
         apiMessage,
         guild,
@@ -803,7 +817,8 @@ object LogStream {
         auditLogEvent = Seq(),
         title = _ => s"Integrations update",
         color = Color.Updated,
-        targetId = None
+        targetId = None,
+        removeIfNoFields = false
       )
 
     case apiMessage @ APIMessage.GuildMemberAdd(member, guild, cache, _) =>
@@ -812,9 +827,29 @@ object LogStream {
         apiMessage = apiMessage,
         guild = guild,
         auditLogEvent = Seq(),
+        fields = _ => member.user.map { user =>
+          val now = Instant.now()
+          val createdAt = user.id.creationDate
+
+          val creationDate = dateTimeFormatter.format(createdAt)
+
+          val ageDays = createdAt.until(now, ChronoUnit.DAYS)
+          val ageHours = createdAt.until(now, ChronoUnit.HOURS)
+          val ageMinutes = createdAt.until(now, ChronoUnit.MINUTES)
+          val ageSeconds = createdAt.until(now, ChronoUnit.SECONDS)
+
+          val creationAge =
+            if (ageDays > 3) s"$ageDays days"
+            else if (ageHours > (60 * 3)) s"$ageHours hours"
+            else if (ageMinutes > (60 * 3)) s"$ageMinutes minutes"
+            else s"$ageSeconds seconds"
+
+          EmbedField("Account created", s"$creationDate ($creationAge old)")
+        }.toList,
         title = _ => s"Member joined ${printUser(member.userId.resolve.get, mentionsWork = false)}",
-        color = Color.Updated,
-        targetId = None
+        color = Color.Created,
+        targetId = None,
+        removeIfNoFields = false
       )
 
     case apiMessage @ APIMessage.GuildMemberRemove(user, guild, cache, _) =>
@@ -823,9 +858,28 @@ object LogStream {
         apiMessage = apiMessage,
         guild = guild,
         auditLogEvent = Seq(),
+        fields = _ => cache.previous.getGuild(guild.id).flatMap(_.members.get(user.id)).flatMap(_.joinedAt).map { joinedAt =>
+          val now = Instant.now()
+
+          val joinedAtDate = dateTimeFormatter.format(joinedAt)
+
+          val ageDays = joinedAt.until(now, ChronoUnit.DAYS)
+          val ageHours = joinedAt.until(now, ChronoUnit.HOURS)
+          val ageMinutes = joinedAt.until(now, ChronoUnit.MINUTES)
+          val ageSeconds = joinedAt.until(now, ChronoUnit.SECONDS)
+
+          val joinedAge =
+            if (ageDays > 3) s"$ageDays days"
+            else if (ageHours > (60 * 3)) s"$ageHours hours"
+            else if (ageMinutes > (60 * 3)) s"$ageMinutes minutes"
+            else s"$ageSeconds seconds"
+
+          EmbedField("Joined at", s"Joined $joinedAtDate ($joinedAge age)")
+        }.toList,
         title = _ => s"Member left ${printUser(user, mentionsWork = false)}",
-        color = Color.Updated,
-        targetId = None
+        color = Color.Deleted,
+        targetId = None,
+        removeIfNoFields = false
       )
 
     case apiMessage @ APIMessage.GuildMemberUpdate(
@@ -841,7 +895,6 @@ object LogStream {
           cache,
           _
         ) =>
-      //TODO: Less hostile docs for APIMessage.GuildMemberUpdate
       implicit val c: CacheSnapshot = cache.current
 
       val old = user.id.resolveMember(guild.id)(cache.previous)
@@ -972,7 +1025,7 @@ object LogStream {
           auditLogEvent = Seq(),
           title = implicit log =>
             s"Updated message in ${printChannelId(guild, GuildChannelId(channelId), mentionsWork = false)}",
-          color = Color.Deleted,
+          color = Color.Updated,
           targetId = Some(messageId),
           fields = _ =>
             (oldOptContent, newOptContent) match {
