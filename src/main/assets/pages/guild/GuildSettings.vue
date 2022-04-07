@@ -300,7 +300,9 @@ export default {
         },
         modLog: {
           channelId: null,
-          ignoredAuditLogEvents: []
+          ignoredAuditLogEvents: [],
+          ignoredChannels: [],
+          ignoredUsers: []
         }
       },
       newChannelOverrideId: null,

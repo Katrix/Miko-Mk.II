@@ -54,6 +54,7 @@
 
 <script>
 import { mapState } from 'vuex'
+import config from "../config"
 
 export default {
   data() {
@@ -63,6 +64,9 @@ export default {
   },
   computed: {
     ...mapState('user', ['availableGuilds']),
+    config() {
+      return config
+    }
   },
   methods: {
     guildImgSrc(guild) {

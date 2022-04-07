@@ -80,7 +80,9 @@ const guestState = {
   },
   modLog: {
     channelId: null,
-    ignoredAuditLogEvents: []
+    ignoredAuditLogEvents: [],
+    ignoredChannels: [],
+    ignoredUsers: []
   }
 }
 
@@ -93,6 +95,7 @@ function useGustSettings(state) {
   Vue.set(state, 'music', guestState.music)
   Vue.set(state, 'voiceText', guestState.voiceText)
   Vue.set(state, 'commands', guestState.commands)
+  Vue.set(state, 'modLog', guestState.modLog)
 }
 
 const mutations = {
@@ -101,6 +104,7 @@ const mutations = {
     Vue.set(state, 'music', settings.music)
     Vue.set(state, 'voiceText', settings.voiceText)
     Vue.set(state, 'commands', settings.commands)
+    Vue.set(state, 'modLog', settings.modLog)
     state.isLoading = false
   },
   clearSettings(state) {
