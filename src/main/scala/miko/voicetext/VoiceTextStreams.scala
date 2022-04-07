@@ -109,13 +109,17 @@ class VoiceTextStreams(
               prevChannelIdOpt = prevGuild.voiceStateFor(userId).flatMap(_.channelId)
               if channelIdOpt != prevChannelIdOpt
             } yield {
-              val channelOpt     = channelIdOpt.flatMap(_.resolve(guildId)).collect { case ch: NormalVoiceGuildChannel => ch }
-              val prevChannelOpt = prevChannelIdOpt.flatMap(_.resolve(guildId)).collect { case ch: NormalVoiceGuildChannel => ch }
+              val channelOpt = channelIdOpt.flatMap(_.resolve(guildId)).collect {
+                case ch: NormalVoiceGuildChannel => ch
+              }
+              val prevChannelOpt = prevChannelIdOpt.flatMap(_.resolve(guildId)).collect {
+                case ch: NormalVoiceGuildChannel => ch
+              }
 
               val removeAndExitF = prevChannelOpt
                 .map { prevChannel =>
                   val (remaining, removeReqs) = removeIfEmpty(prevChannel, guild)
-                  val exitReqs                = remaining.map(userExitTChannel(member, _, prevChannel, guild))
+                  val exitReqs                = remaining.flatMap(userExitTChannel(member, _, prevChannel, guild))
 
                   Source(exitReqs) ++ removeReqs
                 }
@@ -167,11 +171,11 @@ class VoiceTextStreams(
       .via(shiftChannelsImpl)
       .to(Sink.ignore)
 
-  def cleanupImpl: Flow[CacheSnapshot, RequestAnswer[_], NotUsed] =
+  def cleanupImpl: Flow[CacheSnapshot, Any, NotUsed] =
     Flow[CacheSnapshot]
       .mapConcat(c => c.guildMap.values.map(_ -> c).toVector)
       .via(cleanupGuild)
-      .via(RequestStreams.removeContext(requests.flow[Any, NotUsed]))
+      .via(RequestStreams.removeContext(requests.flowSuccess[Any, NotUsed]()))
 
   def cleanupGuild: Flow[(GatewayGuild, CacheSnapshot), Request[_], NotUsed] =
     Flow[(GatewayGuild, CacheSnapshot)]
@@ -198,14 +202,14 @@ class VoiceTextStreams(
       }
       .flatMapMerge(requests.settings.parallelism, identity)
 
-  def shiftChannelsImpl: Flow[CacheSnapshot, RequestAnswer[Any], NotUsed] =
+  def shiftChannelsImpl: Flow[CacheSnapshot, Any, NotUsed] =
     Flow[CacheSnapshot]
       .mapConcat { implicit c =>
         log.info("Starting channel shift")
         c.guildMap.values.map(_ -> c).toVector
       }
       .via(shiftChannelsGuildFlow)
-      .via(RequestStreams.removeContext(requests.flow[Any, NotUsed]))
+      .via(RequestStreams.removeContext(requests.flowSuccess[Any, NotUsed]()))
 
   def shiftChannelsGuildFlow: Flow[(GatewayGuild, CacheSnapshot), Request[_], NotUsed] =
     Flow[(GatewayGuild, CacheSnapshot)].flatMapMerge(
@@ -242,18 +246,35 @@ class VoiceTextStreams(
 
     val exitRoomRequestsSeq =
       textConnected
-        .filterNot(inVoiceChannelIds.contains)
         .collect {
           case userId if guild.memberById(userId).exists(MiscHelper.canHandlerMember(guild, _)) =>
             guild.memberById(userId).get
         }
-        .map { member =>
-          log.info(
-            "Removed invalid user {} from room {}",
-            member.user.map(_.username).getOrElse(""),
-            tChannel.name
+        .flatMap { member =>
+          val isInside = inVoiceChannelIds.contains(member.userId)
+
+          val res = applyPermsIfNeeded(
+            member,
+            tChannel,
+            guild,
+            userPerms(
+              member.userId,
+              permGroupForChannel(vChannel),
+              permSet =>
+                if (isInside) permSet.inside
+                else permSet.outside
+            )
           )
-          userExitTChannel(member, tChannel, vChannel, guild)
+
+          if (res.isDefined) {
+            log.info(
+              "Removed invalid user {} from room {}",
+              member.user.map(_.username).getOrElse(""),
+              tChannel.name
+            )
+          }
+
+          res
         }
 
     val exitRoomRequests = Source(exitRoomRequestsSeq)
@@ -275,7 +296,7 @@ class VoiceTextStreams(
         } else if (wrongPerms(currentAllow, userChannelPerms.allowNative) ||
                    wrongPerms(currentDisallow, userChannelPerms.denyNative)) {
           log.info("Found user {} with wrong permissions. Fixed", inVoiceUser.username)
-          Source.single(applyPerms(inVoice, tChannel, guild, userChannelPerms))
+          Source(applyPermsIfNeeded(inVoice, tChannel, guild, userChannelPerms).toList)
         } else Source.empty
       }
     }
@@ -394,29 +415,41 @@ class VoiceTextStreams(
   )(
       implicit c: CacheSnapshot,
       settings: GuildSettings
-  ): Request[NotUsed] =
-    applyPerms(member, tChannel, guild, userPerms(member.userId, permGroupForChannel(vChannel), _.outside))
+  ): Option[Request[NotUsed]] =
+    applyPermsIfNeeded(member, tChannel, guild, userPerms(member.userId, permGroupForChannel(vChannel), _.outside))
 
-  def applyPerms(
+  def applyPermsIfNeeded(
       member: GuildMember,
       tChannel: TextGuildChannel,
       guild: GatewayGuild,
       perm: VTPermissionValue
-  )(implicit c: CacheSnapshot): Request[NotUsed] =
-    if (MiscHelper.canHandlerMember(guild, member) && perm.isNone)
-      tChannel.deleteChannelPermissionsUser(member.userId)
+  )(implicit c: CacheSnapshot): Option[Request[NotUsed]] = {
+    val everyonePerms = tChannel.permissionOverwrites.getOrElse(
+      guild.everyoneRole.id,
+      PermissionOverwrite(guild.everyoneRole.id, PermissionOverwriteType.Role, Permission.None, Permission.None)
+    )
+    val currentPerms = tChannel.permissionOverwrites.getOrElse(
+      member.userId,
+      PermissionOverwrite(member.userId, PermissionOverwriteType.Member, Permission.None, Permission.None)
+    )
+
+    if (MiscHelper.canHandlerMember(guild, member) && (perm.isNone || perm.sameAsOverwrite(everyonePerms)))
+      Some(tChannel.deleteChannelPermissionsUser(member.userId))
+    else if (!perm.sameAsOverwrite(currentPerms))
+      Some(tChannel.editChannelPermissionsUser(member.userId, perm.allowNative, perm.denyNative))
     else
-      tChannel.editChannelPermissionsUser(member.userId, perm.allowNative, perm.denyNative)
+      None
+  }
 
   def userEnterVChannel(member: GuildMember, channel: NormalVoiceGuildChannel, guild: GatewayGuild)(
       implicit
       c: CacheSnapshot,
       settings: GuildSettings
   ): Source[Request[_], NotUsed] = {
-    val s1 = getOrCreateTextChannel(channel, guild, Some(member)).map {
+    val s1 = getOrCreateTextChannel(channel, guild, Some(member)).mapConcat {
       case Right(tChannel) =>
-        applyPerms(member, tChannel, guild, userPerms(member.userId, permGroupForChannel(channel), _.inside))
-      case Left(req) => req
+        applyPermsIfNeeded(member, tChannel, guild, userPerms(member.userId, permGroupForChannel(channel), _.inside))
+      case Left(req) => List(req)
     }
 
     if (channel
